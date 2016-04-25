@@ -13,7 +13,7 @@ var stdLibs map[string]struct{}
 
 func getStdLibs() map[string]struct{} {
 	stdListOutput := MustRunCmd(".", "go", "list", "std")
-	stdLibs := strings.Split(string(stdListOutput), "\n")
+	stdLibs := SplitLines(stdListOutput)
 	result := map[string]struct{}{}
 	for _, lib := range stdLibs {
 		if lib != "" {
@@ -55,23 +55,26 @@ func GoList(workingDir, cmd, pkg string, mustRun bool) ([]string, error) {
 		args = append(args, pkg)
 	}
 
-	var goListOutput []byte
+	var goListOutput string
 	var err error
 	if mustRun {
 		goListOutput = MustRunCmd(workingDir, "go", args...)
 	} else {
-		_, goListOutput, err = RunCmd(workingDir, "go", args...)
+		goListOutput, err = RunCmd(workingDir, "go", args...)
 	}
 
 	var result []string
 	if err == nil {
-		result = strings.Split(string(goListOutput), "\n")
+		result = SplitLines(goListOutput)
 		result = result[:len(result)-1]
 	}
 	return result, err
 }
 
 func GoDeps(pkg string, tests bool) map[string]struct{} {
+	//This isn't vendor aware, packages already covered by a vendor include will be still returned
+	//To workaround this I'd have to do the recursion myself, and ignore anything that's present in the vendor.
+
 	depsRaw, _ := GoList(".", "Deps", pkg+"/...", true)
 	depSet := map[string]struct{}{}
 	for _, dep := range depsRaw {
@@ -82,7 +85,7 @@ func GoDeps(pkg string, tests bool) map[string]struct{} {
 		return depSet
 	}
 
-	testImports, _ := GoList(".", "TestImports", "./...", true)
+	testImports, _ := GoList(".", "TestImports", pkg+"/...", true)
 	for _, testImport := range testImports {
 		if _, covered := depSet[testImport]; covered {
 			continue
@@ -103,15 +106,19 @@ func GoPathPkg(pkg string) string {
 }
 
 func GoDir(workingDir, pkg string) (string, bool) {
-	//TODO surprisingly, go list here doesn't give a vendored folder if it exists
-	//work around (will need to search the vendor folder for the pkg first)
-	_, goListOutput, err := RunCmd(workingDir, "go", "list", "-f", "{{.Dir}}", pkg)
+	goListOutput, err := RunCmd(workingDir, "go", "list", "-f", "{{.Dir}}", pkg)
 	if err == nil {
-		return strings.Split(string(goListOutput), "\n")[0], true
+		return FirstLine(goListOutput), true
 	}
 	return GoPathPkg(pkg), false
 }
 
-func GoName(path string) string {
-	return string(MustRunCmd(path, "go", "list", "-f", "{{.Name}}"))
+func GoName(path string) (string, error) {
+	for _, gopath := range goPath {
+		relPath, err := filepath.Rel(filepath.Join(gopath, "src"), path)
+		if err == nil && !strings.Contains(relPath, "..") {
+			return filepath.ToSlash(relPath), nil
+		}
+	}
+	return "", fmt.Errorf("Could not match %s to any element of gopath (%v)", path, goPath)
 }

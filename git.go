@@ -39,7 +39,7 @@ func CheckGitStatus(gitPath string) GitStatus {
 	}
 
 	//Detached head check
-	if _, _, err := RunCmd(gitPath, "git", "symbolic-ref", "HEAD"); err != nil {
+	if _, err := RunCmd(gitPath, "git", "symbolic-ref", "HEAD"); err != nil {
 		return GitStatus_Detached
 	}
 
@@ -47,9 +47,9 @@ func CheckGitStatus(gitPath string) GitStatus {
 	//Rather than attempting to decipher this from the version of git installed, I just retry the first time this
 	//runs with an escape, if that works, then we switch over for remaining invokations
 	if !escapeChecked {
-		_, _, err := RunCmd(gitPath, "git", "rev-parse", "@{0}")
+		_, err := RunCmd(gitPath, "git", "rev-parse", "@{0}")
 		if err != nil {
-			_, _, err = RunCmd(gitPath, "git", "rev-parse", "@'{'0'}'")
+			_, err := RunCmd(gitPath, "git", "rev-parse", `@\{0\}`)
 			if err != nil {
 				fmt.Printf("Error\n")
 				fmt.Printf("Could not determine if git curly braces need to be escaped\n")
@@ -64,19 +64,19 @@ func CheckGitStatus(gitPath string) GitStatus {
 
 	var err error
 	if escapeWindows {
-		_, _, err = RunCmd("git", "rev-parse", "--abrev-ref", "--symbolic-full-name", "@'{'upstream'}'")
+		_, err = RunCmd(gitPath, "git", "rev-parse", "--abrev-ref", "--symbolic-full-name", `@\{upstream\}`)
 	} else {
-		_, _, err = RunCmd("git", "rev-parse", "--abrev-ref", "--symbolic-full-name", "@{upstream}")
+		_, err = RunCmd(gitPath, "git", "rev-parse", "--abrev-ref", "--symbolic-full-name", "@{upstream}")
 	}
 	if err != nil {
 		return GitStatus_NoUpstream
 	}
 
-	var unsynced []byte
+	var unsynced string
 	if escapeWindows {
-		unsynced = MustRunCmd(gitPath, "git", "rev-list", `HEAD@{upstream}..HEAD`)
+		unsynced = MustRunCmd(gitPath, "git", "rev-list", `HEAD@\{upstream\}..HEAD`)
 	} else {
-		unsynced = MustRunCmd(gitPath, "git", "rev-list", `HEAD@'{'upstream'}'..HEAD`)
+		unsynced = MustRunCmd(gitPath, "git", "rev-list", `HEAD@{upstream}..HEAD`)
 	}
 
 	if len(unsynced) == 0 {
@@ -87,7 +87,7 @@ func CheckGitStatus(gitPath string) GitStatus {
 }
 
 func GitTopLevel(gitPath string) string {
-	return string(MustRunCmd(gitPath, "git", "rev-parse", "--show-toplevel"))
+	return SanitisePath(FirstLine(MustRunCmd(gitPath, "git", "rev-parse", "--show-toplevel")))
 }
 
 //These are just straight git wrappers

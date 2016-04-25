@@ -6,24 +6,30 @@ import (
 	"strings"
 )
 
-func RunCmd(dir, command string, args ...string) (string, []byte, error) {
+func runCmd(dir, command string, args []string) (string, string, error) {
 	msg := fmt.Sprintf(" [%s] %s %s", dir, command, strings.Join(args, " "))
-	if verbose {
-		fmt.Println(msg)
-	}
 	cmd := exec.Command(command, args...)
 	cmd.Dir = dir
 	output, err := cmd.CombinedOutput()
-	return msg, output, err
+	return msg, string(output), err
 }
 
-func MustRunCmd(dir, command string, args ...string) []byte {
-	msg, output, err := RunCmd(dir, command, args...)
-	if err != nil {
-		if !verbose {
-			fmt.Println(msg)
-		}
-		ErrorExit(string(output))
+func RunCmd(dir, command string, args ...string) (string, error) {
+	msg, output, err := runCmd(dir, command, args)
+	if verbose {
+		fmt.Println(msg)
 	}
+	return output, err
+}
+
+func MustRunCmd(dir, command string, args ...string) string {
+	msg, output, err := runCmd(dir, command, args)
+	if err != nil || verbose {
+		fmt.Println(msg)
+	}
+	if err != nil {
+		ErrorExit(output)
+	}
+
 	return output
 }

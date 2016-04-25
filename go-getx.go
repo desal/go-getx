@@ -17,7 +17,6 @@ var (
 )
 
 func Get(workingDir, pkg string, depsOnly, install, tests, update bool, gotten map[string]struct{}) {
-	fmt.Println("Get", workingDir, pkg, depsOnly, install, tests, update)
 	importPath, alreadyExists := GoDir(workingDir, pkg)
 	var rootPkg string
 
@@ -30,8 +29,6 @@ func Get(workingDir, pkg string, depsOnly, install, tests, update bool, gotten m
 
 	} else {
 		if !alreadyExists {
-			//TODO check for cruft in folder
-
 			var gitUrl string
 			var err error
 			rootPkg, gitUrl, err = GetUrl(pkg)
@@ -45,21 +42,27 @@ func Get(workingDir, pkg string, depsOnly, install, tests, update bool, gotten m
 			}
 			rootPkgPath := GoPathPkg(rootPkg)
 			GitClone(rootPkgPath, gitUrl)
+
 		} else if update {
-			gitStatus := CheckGitStatus(importPath)
-			if gitStatus == GitStatus_Clean {
-				GitPull(importPath)
-				gitTopLevel := GitTopLevel(importPath)
-				rootPkg = GoName(gitTopLevel)
-				if _, got := gotten[rootPkg]; got {
-					gotten[pkg] = struct{}{}
-					return
-				}
-			} else {
-				fmt.Printf("WARNING: Skipping %s as git repo has status %s\n", importPath, gitStatus.String())
+			var err error
+
+			gitTopLevel := GitTopLevel(importPath)
+			rootPkg, err = GoName(gitTopLevel)
+			if err != nil {
+				panic(err)
+			}
+			if _, got := gotten[rootPkg]; got {
 				gotten[pkg] = struct{}{}
 				return
 			}
+
+			gitStatus := CheckGitStatus(importPath)
+			if gitStatus != GitStatus_Clean {
+				gotten[pkg] = struct{}{}
+				return
+			}
+
+			GitPull(importPath)
 		} else { //alreadyExists, don't need to update
 			gotten[pkg] = struct{}{}
 			return
@@ -67,16 +70,24 @@ func Get(workingDir, pkg string, depsOnly, install, tests, update bool, gotten m
 	}
 
 	gotten[rootPkg] = struct{}{}
+	importPath, alreadyExists = GoDir(workingDir, pkg)
+	if !alreadyExists {
+		panic("Fetch without error, but no output")
+	}
 
 	for dep, _ := range GoDeps(rootPkg, tests) {
 		if GoIsStdLib(dep) {
 			continue
 		}
-		fmt.Println("  checking dep", dep)
 		_, got := gotten[dep]
 		if !got {
 			Get(importPath, dep, false, install, false, update, gotten)
+		} else {
 		}
+	}
+
+	if install {
+		_ = MustRunCmd(workingDir, "go", "install", rootPkg+"/...")
 	}
 }
 
