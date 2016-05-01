@@ -7,6 +7,8 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+
+	"github.com/desal/cmd"
 )
 
 type Package struct {
@@ -20,8 +22,11 @@ type Repo struct {
 }
 
 type Repos struct {
-	Repos []Repo
+	output cmd.Output
+	Repos  []Repo
 }
+
+func NewRepos(output cmd.Output) Repos { return Repos{output: output} }
 
 func Pkg(importPath string, imports ...string) Package {
 	return Package{importPath, imports}
@@ -31,23 +36,23 @@ func (r *Repos) AddRepo(basePath string, packages ...Package) {
 	r.Repos = append(r.Repos, Repo{basePath, packages})
 }
 
-func (r *Repos) Test(f func()) {
+func (r *Repos) Test(f func(goPath []string)) {
 	gitDir, err := ioutil.TempDir("", "gogetx_test")
 	if err != nil {
 		panic(err)
 	}
-	defer os.RemoveAll(gitDir)
+	//	defer os.RemoveAll(gitDir)
 
 	rules := []rule{}
 	for _, repo := range r.Repos {
-		rules = append(rules, MockPackageBareGit(gitDir, repo))
+		rules = append(rules, MockPackageBareGit(gitDir, repo, r.output))
 	}
 
 	mockGoPath, err := ioutil.TempDir("", "gogetx_test")
 	if err != nil {
 		panic(err)
 	}
-	defer os.RemoveAll(mockGoPath)
+	//	defer os.RemoveAll(mockGoPath)
 
 	err = os.MkdirAll(filepath.Join(mockGoPath, "src"), 0644)
 	if err != nil {
@@ -72,13 +77,18 @@ func mockPackage(dir, pkgName string, imports []string) {
 }
 
 //creates a mocked package in a bare git repo.
-func MockPackageBareGit(rootDir string, repo Repo) rule {
+func MockPackageBareGit(rootDir string, repo Repo, output cmd.Output) rule {
 	escapedPkg := strings.Replace(repo.BasePath, "/", "_", -1)
 	barePath := filepath.Join(rootDir, escapedPkg+".git")
 	repoPath := filepath.Join(rootDir, escapedPkg)
 	os.MkdirAll(barePath, 0644)
-	MustRunCmd(barePath, "git", "--bare", "init")
-	MustRunCmd(rootDir, "git", "clone", escapedPkg+".git")
+
+	bareCtx := cmd.NewContext(barePath, output, cmd.Must)
+	rootCtx := cmd.NewContext(rootDir, output, cmd.Must)
+	repoCtx := cmd.NewContext(repoPath, output, cmd.Must)
+
+	bareCtx.Execf("git --bare init")
+	rootCtx.Execf("git clone %s.git", escapedPkg)
 
 	for _, pkg := range repo.Packages {
 		//Check the package actually belongs in the repo
@@ -88,38 +98,37 @@ func MockPackageBareGit(rootDir string, repo Repo) rule {
 		relativePkg := pkg.ImportPath[len(repo.BasePath):]
 		mockPackage(filepath.Join(repoPath, relativePkg), pkg.ImportPath, pkg.Imports)
 	}
-	MustRunCmd(repoPath, "git", "add", "-A")
-	MustRunCmd(repoPath, "git", "commit", "-m", `"init"`)
-	MustRunCmd(repoPath, "git", "push")
+
+	repoCtx.Execf("git add -A")
+	repoCtx.Execf(`git commit -m "init"`)
+	repoCtx.Execf("git push")
 
 	return NewRule(repo.BasePath, barePath)
 }
 
-func MockEnv(mockGoPath string, mockRules []rule, f func()) {
+func MockEnv(mockGoPath string, mockRules []rule, f func(goPath []string)) {
 	//This clearly shows the pain i've caused myself by hanging onto globals/directly fetching environment.
 	//TODO split out the "Go()" func so that this is all encapsulated, and remove this function.
-	goPathActual := goPath
 	rulesActual := rules
 	wdActual, err := os.Getwd()
+	goPathActual := os.Getenv("GOPATH")
 	if err != nil {
 		panic(err)
 	}
 
-	goPath = []string{mockGoPath}
-	os.Setenv("GOPATH", strings.Join(goPath, ":"))
+	os.Setenv("GOPATH", mockGoPath)
 	rules = mockRules
 	err = os.Chdir(filepath.Join(mockGoPath, "src"))
 	if err != nil {
 		panic(err)
 	}
 
-	f()
+	f([]string{mockGoPath})
 
-	goPath = goPathActual
-	os.Setenv("GOPATH", strings.Join(goPath, ":"))
 	rules = rulesActual
 	err = os.Chdir(wdActual)
 	if err != nil {
 		panic(err)
 	}
+	os.Setenv("GOPATH", goPathActual)
 }

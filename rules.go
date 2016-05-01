@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/desal/dsutil"
 )
 
 type rule struct {
@@ -51,7 +53,7 @@ func GetUrl(pkg string) (goImport, gitUrl string, err error) {
 }
 
 func LoadRules() error {
-	filename := filepath.Join(UserHomeDir(), ".go-getx-map")
+	filename := filepath.Join(dsutil.UserHomeDir(), ".go-getx-map")
 	file, err := os.Open(filename)
 	if err != nil {
 		return err
