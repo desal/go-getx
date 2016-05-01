@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"strings"
 
@@ -65,7 +64,6 @@ func (c *Context) AlreadyDone(pkg string) bool {
 
 func (c *Context) Get(workingDir, pkg string, depsOnly, tests bool) {
 	goCtx := gocmd.New(c.output, c.goPath) //TODO why am i creating this again?
-	fmt.Println("GOPATH = ", c.goPath)
 	goDir, alreadyExists := goCtx.Dir(workingDir, pkg)
 
 	if depsOnly && !alreadyExists {
@@ -145,8 +143,7 @@ func (c *Context) Get(workingDir, pkg string, depsOnly, tests bool) {
 	}
 
 	list, _ := goCtx.List(workingDir, pkg+"/...")
-	fmt.Println("golist len =", len(list))
-	for pkg, e := range list {
+	for _, e := range list {
 		//Only check imports, because the recursive nature of this tool
 		//will get the transisitive dependencies.
 		var imports []interface{}
@@ -154,10 +151,11 @@ func (c *Context) Get(workingDir, pkg string, depsOnly, tests bool) {
 		if importsInt, ok := e["Imports"]; ok {
 			imports = importsInt.([]interface{})
 		}
+
 		if testImportsInt, ok := e["TestImports"]; ok {
 			imports = testImportsInt.([]interface{})
 		}
-		fmt.Println("checking", pkg, len(imports), len(testImports))
+
 		for _, impInt := range imports {
 			imp := impInt.(string)
 			if !goCtx.IsStdLib(imp) && !c.AlreadyDone(imp) {
@@ -229,166 +227,3 @@ func main() {
 
 	app.Run(os.Args)
 }
-
-/*
-func Get(workingDir, pkg string, depsOnly, tests, update bool, gotten map[string]struct{}) {
-	importPath, alreadyExists := GoDir(workingDir, pkg)
-	var rootPkg string
-
-	if depsOnly {
-		if !alreadyExists {
-			fmt.Printf("ERROR: Can't get package %s with -d, pkg does not exist\n", pkg)
-			os.Exit(1)
-		}
-		rootPkg = pkg
-
-	} else {
-		if !alreadyExists {
-			var gitUrl string
-			var err error
-			rootPkg, gitUrl, err = GetUrl(pkg)
-			if _, got := gotten[rootPkg]; got {
-				gotten[pkg] = struct{}{}
-				return
-			}
-			if err != nil {
-				fmt.Println(err.Error())
-				os.Exit(1)
-			}
-			rootPkgPath := GoPathPkg(rootPkg)
-			GitClone(rootPkgPath, gitUrl)
-
-		} else if update {
-			var err error
-
-			gitTopLevel := GitTopLevel(importPath)
-			rootPkg, err = GoName(gitTopLevel)
-			if err != nil {
-				panic(err)
-			}
-			if _, got := gotten[rootPkg]; got {
-				panic("unpossible!")
-				gotten[pkg] = struct{}{}
-				return
-			}
-
-			gitStatus := CheckGitStatus(importPath)
-			if gitStatus != GitStatus_Clean {
-				gotten[pkg] = struct{}{}
-				return
-			}
-
-			GitPull(importPath)
-		} else { //alreadyExists, don't need to update
-			gotten[pkg] = struct{}{}
-			return
-		}
-	}
-
-	gotten[rootPkg] = struct{}{}
-	importPath, alreadyExists = GoDir(workingDir, pkg)
-	if !alreadyExists {
-		panic("Fetch without error, but no output")
-	}
-
-	for dep, _ := range GoDeps(rootPkg, tests) {
-		if GoIsStdLib(dep) {
-			continue
-		}
-		if !AlreadyGot(gotten, dep) {
-			Get(importPath, dep, false, install, false, update, gotten)
-		}
-	}
-
-	if install {
-		//TODO handle this more elegantly.
-		//At the very least, a failing compile should just warn, not fail.
-		//Consider doing the equivelent of go list go install `go list rootPkg/...`
-		//		_ = MustRunCmd(workingDir, "go", "install", rootPkg+"/...")
-		GoInstallAll(workingDir, rootPkg)
-	}
-}
-
-func Usage() {
-
-	fmt.Printf(`
-Usage: go-getx [option...] packages
-
-Options
-  -d, --dependencies-only
-             Will only fetch dependencies, does not try to fetch the named
-             packages themselves.
-
-  -v, --verbose
-             Verbose
-
-  -i, --install
-             Runs go install ./... after git checkout
-
-  -t, --tests
-             Fetches deps required to run tests
-
-  -u, --update
-             Update the named packages and dependencies. By default go-getx
-             will only get missing packages.
-`)
-}
-
-func main() {
-	if len(os.Args) == 1 {
-		Usage()
-		os.Exit(0)
-	}
-	err := LoadRules()
-	if err != nil {
-		fmt.Println("ERROR Failed to load rules")
-		fmt.Println(err.Error())
-		os.Exit(1)
-	}
-	//command line args
-	var pkgs []string
-
-	depsOnly := false
-	install := false
-	tests := false
-	update := false
-
-	for _, arg := range os.Args[1:] {
-		switch arg {
-		case "-d":
-			fallthrough
-		case "--dependencies-only":
-			depsOnly = true
-		case "-v":
-			fallthrough
-		case "--verbose":
-			verbose = true
-		case "-i":
-			fallthrough
-		case "--install":
-			install = true
-		case "-t":
-			fallthrough
-		case "--tests":
-			tests = true
-		case "-u":
-			fallthrough
-		case "--update":
-			update = true
-		default:
-			pkgs = append(pkgs, arg)
-		}
-	}
-	if len(pkgs) == 0 && depsOnly {
-		pkgs = append(pkgs, ".")
-	} else if len(pkgs) == 0 {
-		Usage()
-		os.Exit(1)
-	}
-
-	gotten := map[string]struct{}{}
-	for _, pkg := range pkgs {
-		Get(".", pkg, depsOnly, install, tests, update, gotten)
-	}
-}
-*/

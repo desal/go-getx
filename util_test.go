@@ -6,9 +6,11 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/desal/cmd"
+	"github.com/desal/dsutil"
 )
 
 type Package struct {
@@ -36,12 +38,12 @@ func (r *Repos) AddRepo(basePath string, packages ...Package) {
 	r.Repos = append(r.Repos, Repo{basePath, packages})
 }
 
-func (r *Repos) Test(f func(goPath []string)) {
+func (r *Repos) Test(f func(goPath []string)) set {
 	gitDir, err := ioutil.TempDir("", "gogetx_test")
 	if err != nil {
 		panic(err)
 	}
-	//	defer os.RemoveAll(gitDir)
+	defer os.RemoveAll(gitDir)
 
 	rules := []rule{}
 	for _, repo := range r.Repos {
@@ -52,13 +54,27 @@ func (r *Repos) Test(f func(goPath []string)) {
 	if err != nil {
 		panic(err)
 	}
-	//	defer os.RemoveAll(mockGoPath)
+	defer os.RemoveAll(mockGoPath)
 
 	err = os.MkdirAll(filepath.Join(mockGoPath, "src"), 0644)
 	if err != nil {
 		panic(err)
 	}
 	MockEnv(mockGoPath, rules, f)
+
+	cmdCtx := cmd.NewContext(mockGoPath, r.output, cmd.Must)
+
+	res, _ := cmdCtx.Execf("find . -not ( -type d -name .git -prune ) -type f")
+
+	res_noarch := strings.Replace(res, "./pkg/"+runtime.GOOS+"_"+runtime.GOARCH, "./pkg", -1)
+	res_noexe := strings.Replace(res_noarch, ".exe", "", -1)
+	res_clean := dsutil.SplitLines(res_noexe, true)
+
+	result := set{}
+	for _, e := range res_clean {
+		result[e] = empty{}
+	}
+	return result
 }
 
 func mockPackage(dir, pkgName string, imports []string) {
