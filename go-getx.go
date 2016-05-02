@@ -153,7 +153,7 @@ func (c *Context) Get(workingDir, pkg string, depsOnly, tests bool) {
 		}
 
 		if testImportsInt, ok := e["TestImports"]; ok {
-			imports = testImportsInt.([]interface{})
+			testImports = testImportsInt.([]interface{})
 		}
 
 		for _, impInt := range imports {
@@ -207,6 +207,7 @@ func main() {
 			os.Exit(0)
 		}
 
+		LoadRules()
 		output := cmd.NewStdOutput(*verbose, richtext.Ansi())
 
 		var scanMode ScanMode
