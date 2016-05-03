@@ -4,11 +4,8 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
-
-	"github.com/desal/dsutil"
 )
 
 type rule struct {
@@ -16,7 +13,9 @@ type rule struct {
 	replace string
 }
 
-var rules []rule
+type RuleSet struct {
+	rules []rule
+}
 
 func NewRule(match, replace string) rule {
 	r := rule{}
@@ -42,8 +41,8 @@ func (r *rule) tryRegex(s string) (goImport, gitUrl string, success bool) {
 	return subStr, r.re.ReplaceAllString(subStr, r.replace), true
 }
 
-func GetUrl(pkg string) (goImport, gitUrl string, err error) {
-	for _, rule := range rules {
+func (r *RuleSet) GetUrl(pkg string) (goImport, gitUrl string, err error) {
+	for _, rule := range r.rules {
 		goImport, gitUrl, ok := rule.tryRegex(pkg)
 		if ok {
 			return goImport, gitUrl, nil
@@ -52,13 +51,14 @@ func GetUrl(pkg string) (goImport, gitUrl string, err error) {
 	return "", "", fmt.Errorf("Could not find a rule matching %s", pkg)
 }
 
-func LoadRules() error {
-	filename := filepath.Join(dsutil.UserHomeDir(), ".go-getx-map")
+func LoadRulesFromFile(filename string) (RuleSet, error) {
 	file, err := os.Open(filename)
 	if err != nil {
-		return err
+		return RuleSet{}, err
 	}
+	defer file.Close()
 
+	rules := []rule{}
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		text := scanner.Text()
@@ -72,5 +72,5 @@ func LoadRules() error {
 		}
 		rules = append(rules, NewRule(ruleDef[0], ruleDef[1]))
 	}
-	return nil
+	return RuleSet{rules}, nil
 }

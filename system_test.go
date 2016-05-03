@@ -21,8 +21,8 @@ func TestSingleRepo(t *testing.T) {
 	repos.AddRepo("gh/u2/p2",
 		Pkg("gh/u2/p2", "gh/u1/p1/s1", "gh/u1/p1", "gh/u1/p1/s2"))
 
-	fileList := repos.Test(func(goPath []string) {
-		ctx := NewContext(true, ScanMode_Skip, output, goPath)
+	fileList := repos.Test(func(goPath []string, ruleSet RuleSet) {
+		ctx := NewContext(true, ScanMode_Skip, output, goPath, ruleSet)
 		ctx.Get(".", "gh/u1/p1/s2", false, false)
 	})
 
@@ -52,8 +52,8 @@ func TestDependentRepo(t *testing.T) {
 	repos.AddRepo("gh/u2/p2",
 		Pkg("gh/u2/p2", "gh/u1/p1/s1", "gh/u1/p1", "gh/u1/p1/s2"))
 
-	fileList := repos.Test(func(goPath []string) {
-		ctx := NewContext(true, ScanMode_Skip, output, goPath)
+	fileList := repos.Test(func(goPath []string, ruleSet RuleSet) {
+		ctx := NewContext(true, ScanMode_Skip, output, goPath, ruleSet)
 		ctx.Get(".", "gh/u2/p2", false, false)
 	})
 
@@ -84,8 +84,8 @@ func TestMultiDepOk(t *testing.T) {
 	repos.AddRepo("gh/u2/p2",
 		Pkg("gh/u2/p2", "gh/u1/p1/s1", "gh/u1/p1", "gh/u2/p1"))
 
-	fileList := repos.Test(func(goPath []string) {
-		ctx := NewContext(true, ScanMode_Skip, output, goPath)
+	fileList := repos.Test(func(goPath []string, ruleSet RuleSet) {
+		ctx := NewContext(true, ScanMode_Skip, output, goPath, ruleSet)
 		ctx.Get(".", "gh/u2/p2", false, false)
 	})
 
@@ -118,8 +118,8 @@ func TestMultiDepPartialFail(t *testing.T) {
 	repos.AddRepo("gh/u2/p2",
 		Pkg("gh/u2/p2", "gh/u1/p1/s1", "gh/u1/p1", "gh/u2/p1"))
 
-	fileList := repos.Test(func(goPath []string) {
-		ctx := NewContext(true, ScanMode_Skip, output, goPath)
+	fileList := repos.Test(func(goPath []string, ruleSet RuleSet) {
+		ctx := NewContext(true, ScanMode_Skip, output, goPath, ruleSet)
 		ctx.Get(".", "gh/u2/p2", false, false)
 	})
 

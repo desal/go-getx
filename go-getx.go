@@ -1,10 +1,13 @@
 package main
 
 import (
+	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/desal/cmd"
+	"github.com/desal/dsutil"
 	"github.com/desal/git"
 	"github.com/desal/gocmd"
 	"github.com/desal/richtext"
@@ -33,9 +36,10 @@ type Context struct {
 	output   cmd.Output
 	goPath   []string
 	gitCtx   *git.Context
+	ruleSet  RuleSet
 }
 
-func NewContext(install bool, scanMode ScanMode, output cmd.Output, goPath []string) *Context {
+func NewContext(install bool, scanMode ScanMode, output cmd.Output, goPath []string, ruleSet RuleSet) *Context {
 	return &Context{
 		donePkgs: set{},
 		install:  install,
@@ -43,6 +47,7 @@ func NewContext(install bool, scanMode ScanMode, output cmd.Output, goPath []str
 		output:   output,
 		goPath:   goPath,
 		gitCtx:   git.New(output),
+		ruleSet:  ruleSet,
 	}
 }
 
@@ -73,7 +78,7 @@ func (c *Context) Get(workingDir, pkg string, depsOnly, tests bool) {
 		//Can do nothing
 		c.donePkgs[pkg] = empty{}
 	} else if !alreadyExists {
-		rootPkg, gitUrl, err := GetUrl(pkg)
+		rootPkg, gitUrl, err := c.ruleSet.GetUrl(pkg)
 		if c.AlreadyDone(rootPkg) {
 			c.donePkgs[pkg] = empty{}
 			return
@@ -207,7 +212,12 @@ func main() {
 			os.Exit(0)
 		}
 
-		LoadRules()
+		ruleSet, err := LoadRulesFromFile(filepath.Join(dsutil.UserHomeDir(), ".go-getx-map"))
+		if err != nil {
+			fmt.Println(err.Error())
+			os.Exit(1)
+		}
+
 		output := cmd.NewStdOutput(*verbose, richtext.Ansi())
 
 		var scanMode ScanMode
@@ -220,7 +230,7 @@ func main() {
 		}
 
 		goPath := gocmd.FromEnv(output)
-		ctx := NewContext(*install, scanMode, output, goPath)
+		ctx := NewContext(*install, scanMode, output, goPath, ruleSet)
 		for _, pkg := range *pkgs {
 			ctx.Get(".", pkg, *dependencies, *tests)
 		}

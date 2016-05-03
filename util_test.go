@@ -38,7 +38,7 @@ func (r *Repos) AddRepo(basePath string, packages ...Package) {
 	r.Repos = append(r.Repos, Repo{basePath, packages})
 }
 
-func (r *Repos) Test(f func(goPath []string)) set {
+func (r *Repos) Test(f func(goPath []string, ruleSet RuleSet)) set {
 	gitDir, err := ioutil.TempDir("", "gogetx_test")
 	if err != nil {
 		panic(err)
@@ -60,7 +60,7 @@ func (r *Repos) Test(f func(goPath []string)) set {
 	if err != nil {
 		panic(err)
 	}
-	MockEnv(mockGoPath, rules, f)
+	MockEnv(mockGoPath, RuleSet{rules}, f)
 
 	cmdCtx := cmd.NewContext(mockGoPath, r.output, cmd.Must)
 
@@ -122,10 +122,9 @@ func MockPackageBareGit(rootDir string, repo Repo, output cmd.Output) rule {
 	return NewRule(repo.BasePath, barePath)
 }
 
-func MockEnv(mockGoPath string, mockRules []rule, f func(goPath []string)) {
+func MockEnv(mockGoPath string, ruleSet RuleSet, f func(goPath []string, ruleSet RuleSet)) {
 	//This clearly shows the pain i've caused myself by hanging onto globals/directly fetching environment.
 	//TODO split out the "Go()" func so that this is all encapsulated, and remove this function.
-	rulesActual := rules
 	wdActual, err := os.Getwd()
 	goPathActual := os.Getenv("GOPATH")
 	if err != nil {
@@ -133,15 +132,13 @@ func MockEnv(mockGoPath string, mockRules []rule, f func(goPath []string)) {
 	}
 
 	os.Setenv("GOPATH", mockGoPath)
-	rules = mockRules
 	err = os.Chdir(filepath.Join(mockGoPath, "src"))
 	if err != nil {
 		panic(err)
 	}
 
-	f([]string{mockGoPath})
+	f([]string{mockGoPath}, ruleSet)
 
-	rules = rulesActual
 	err = os.Chdir(wdActual)
 	if err != nil {
 		panic(err)
