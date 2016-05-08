@@ -19,7 +19,7 @@ import (
 //b/([^/]+)=http://other/repos/$1.git
 
 func main() {
-	app := cli.App("gogetx", "go get extended")
+	app := cli.App("go-getx", "go get extended")
 
 	app.Spec = "[-d] [-v] [-i] [-f | -u] [-t] [PKG...]"
 

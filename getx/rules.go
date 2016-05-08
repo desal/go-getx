@@ -3,6 +3,7 @@ package getx
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"strings"
@@ -57,9 +58,12 @@ func LoadRulesFromFile(filename string) (RuleSet, error) {
 		return RuleSet{}, err
 	}
 	defer file.Close()
+	return LoadRules(file)
+}
 
+func LoadRules(r io.Reader) (RuleSet, error) {
 	rules := []rule{}
-	scanner := bufio.NewScanner(file)
+	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
 		text := scanner.Text()
 		if string(text[0]) == "#" {
