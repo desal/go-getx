@@ -2,9 +2,11 @@ package getx
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/desal/cmd"
+	"github.com/desal/dsutil"
 	"github.com/desal/git"
 	"github.com/desal/gocmd"
 )
@@ -25,6 +27,7 @@ type Context struct {
 	scanMode ScanMode
 	output   cmd.Output
 	goPath   []string
+	cmdCtx   *cmd.Context
 	gitCtx   *git.Context
 	ruleSet  RuleSet
 }
@@ -36,6 +39,7 @@ func NewContext(install bool, scanMode ScanMode, output cmd.Output, goPath []str
 		scanMode: scanMode,
 		output:   output,
 		goPath:   goPath,
+		cmdCtx:   cmd.NewContext(".", output),
 		gitCtx:   git.New(output),
 		ruleSet:  ruleSet,
 	}
@@ -98,19 +102,22 @@ func (c *Context) Get(workingDir, pkg string, depsOnly, tests bool) {
 			return
 		}
 
-		list, err := goCtx.List(gitTopLevel, "")
-		if err != nil {
-			c.donePkgs[pkg] = empty{}
-			return
-		}
-
-		if len(list) != 1 {
-			panic("go list with no args should return a single package")
-		}
-
 		var rootPkg string
-		for e, _ := range list { //jump into the only element
-			rootPkg = e
+		{
+			saneDir, err := dsutil.SanitisePath(c.cmdCtx, goDir)
+			if err != nil {
+				panic(err)
+			}
+
+			if !strings.HasSuffix(saneDir, pkg) {
+				panic("pkg not in path")
+			}
+			srcPath := strings.TrimSuffix(saneDir, pkg)
+
+			if !strings.HasPrefix(gitTopLevel, srcPath) {
+				panic("git top level not in src")
+			}
+			rootPkg = strings.TrimPrefix(gitTopLevel, srcPath)
 		}
 
 		if c.AlreadyDone(rootPkg) {
