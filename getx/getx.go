@@ -87,9 +87,9 @@ func (c *Context) Get(workingDir, pkg string, depsOnly, tests bool) {
 
 		err = c.gitCtx.Clone(goDir, gitUrl, false)
 		if err != nil {
-			c.donePkgs[pkg] = empty{}
-			c.donePkgs[rootPkg] = empty{}
-			return
+			c.output.Error("Failed to clone %s:\n%s", gitUrl, err.Error())
+			os.Exit(1)
+
 		}
 		c.donePkgs[pkg] = empty{}
 		c.donePkgs[rootPkg] = empty{}
