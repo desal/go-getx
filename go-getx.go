@@ -2,8 +2,8 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
+	"os"
 
 	"github.com/desal/cmd"
 	"github.com/desal/dsutil"

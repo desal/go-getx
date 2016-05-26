@@ -2,7 +2,6 @@ package getx
 
 import (
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/desal/cmd"
