@@ -9,41 +9,41 @@ import (
 	"strings"
 )
 
-type rule struct {
-	re      *regexp.Regexp
-	replace string
+type Rule struct {
+	Re      *regexp.Regexp
+	Replace string
 }
 
 type RuleSet struct {
-	rules []rule
+	Rules []Rule
 }
 
-func NewRule(match, replace string) rule {
-	r := rule{}
+func NewRule(match, replace string) Rule {
+	r := Rule{}
 	match = "^" + strings.TrimSpace(match)
 
 	var err error
-	r.re, err = regexp.Compile(match)
+	r.Re, err = regexp.Compile(match)
 
 	if err != nil {
 		fmt.Println("Regexp Error:", err.Error())
 		os.Exit(1)
 	}
 
-	r.replace = strings.TrimSpace(replace)
+	r.Replace = strings.TrimSpace(replace)
 	return r
 }
 
-func (r *rule) tryRegex(s string) (goImport, gitUrl string, success bool) {
-	subStr := r.re.FindString(s)
+func (r *Rule) tryRegex(s string) (goImport, gitUrl string, success bool) {
+	subStr := r.Re.FindString(s)
 	if subStr == "" {
 		return "", "", false
 	}
-	return subStr, r.re.ReplaceAllString(subStr, r.replace), true
+	return subStr, r.Re.ReplaceAllString(subStr, r.Replace), true
 }
 
 func (r *RuleSet) GetUrl(pkg string) (goImport, gitUrl string, err error) {
-	for _, rule := range r.rules {
+	for _, rule := range r.Rules {
 		goImport, gitUrl, ok := rule.tryRegex(pkg)
 		if ok {
 			return goImport, gitUrl, nil
@@ -62,7 +62,7 @@ func LoadRulesFromFile(filename string) (RuleSet, error) {
 }
 
 func LoadRules(r io.Reader) (RuleSet, error) {
-	rules := []rule{}
+	rules := []Rule{}
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
 		text := scanner.Text()

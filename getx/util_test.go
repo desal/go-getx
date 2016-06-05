@@ -45,7 +45,7 @@ func (r *Repos) Test(f func(goPath []string, ruleSet RuleSet)) set {
 	}
 	defer os.RemoveAll(gitDir)
 
-	rules := []rule{}
+	rules := []Rule{}
 	for _, repo := range r.Repos {
 		rules = append(rules, MockPackageBareGit(gitDir, repo, r.output))
 	}
@@ -93,7 +93,7 @@ func mockPackage(dir, pkgName string, imports []string) {
 }
 
 //creates a mocked package in a bare git repo.
-func MockPackageBareGit(rootDir string, repo Repo, output cmd.Output) rule {
+func MockPackageBareGit(rootDir string, repo Repo, output cmd.Output) Rule {
 	escapedPkg := strings.Replace(repo.BasePath, "/", "_", -1)
 	barePath := filepath.Join(rootDir, escapedPkg+".git")
 	repoPath := filepath.Join(rootDir, escapedPkg)
