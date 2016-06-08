@@ -132,6 +132,10 @@ func (c *Context) Get(workingDir, pkg string, depsOnly, tests bool) {
 			gitStatus, err := c.gitCtx.Status(goDir, false)
 			if err == nil && gitStatus == git.Clean {
 				c.gitCtx.Pull(goDir, false)
+			} else if err != nil {
+				c.output.Error("Error running git status on %s", goDir)
+			} else {
+				c.output.Warning("Skipping %s, git status is %s", gitStatus.String())
 			}
 		}
 
