@@ -2,8 +2,8 @@ package main
 
 import (
 	"fmt"
-	"path/filepath"
 	"os"
+	"path/filepath"
 
 	"github.com/desal/cmd"
 	"github.com/desal/dsutil"
@@ -60,7 +60,7 @@ func main() {
 		goPath := gocmd.FromEnv(output)
 		ctx := getx.NewContext(*install, scanMode, output, goPath, ruleSet)
 		for _, pkg := range *pkgs {
-			ctx.Get(".", pkg, *dependencies, *tests)
+			ctx.Get(".", pkg, *dependencies, *tests, false)
 		}
 	}
 

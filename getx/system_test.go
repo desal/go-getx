@@ -23,7 +23,7 @@ func TestSingleRepo(t *testing.T) {
 
 	fileList := repos.Test(func(goPath []string, ruleSet RuleSet) {
 		ctx := NewContext(true, ScanMode_Skip, output, goPath, ruleSet)
-		ctx.Get(".", "gh/u1/p1/s2", false, false)
+		ctx.Get(".", "gh/u1/p1/s2", false, false, false)
 	})
 
 	expected := set{
@@ -54,7 +54,7 @@ func TestDependentRepo(t *testing.T) {
 
 	fileList := repos.Test(func(goPath []string, ruleSet RuleSet) {
 		ctx := NewContext(true, ScanMode_Skip, output, goPath, ruleSet)
-		ctx.Get(".", "gh/u2/p2", false, false)
+		ctx.Get(".", "gh/u2/p2", false, false, false)
 	})
 
 	expected := set{
@@ -86,7 +86,7 @@ func TestMultiDepOk(t *testing.T) {
 
 	fileList := repos.Test(func(goPath []string, ruleSet RuleSet) {
 		ctx := NewContext(true, ScanMode_Skip, output, goPath, ruleSet)
-		ctx.Get(".", "gh/u2/p2", false, false)
+		ctx.Get(".", "gh/u2/p2", false, false, false)
 	})
 
 	expected := set{
@@ -120,7 +120,7 @@ func TestMultiDepPartialFail(t *testing.T) {
 
 	fileList := repos.Test(func(goPath []string, ruleSet RuleSet) {
 		ctx := NewContext(true, ScanMode_Skip, output, goPath, ruleSet)
-		ctx.Get(".", "gh/u2/p2", false, false)
+		ctx.Get(".", "gh/u2/p2", false, false, false)
 	})
 
 	expected := set{
@@ -151,11 +151,11 @@ func TestDepNoRootUpgrade(t *testing.T) {
 	fileList := repos.Test(func(goPath []string, ruleSet RuleSet) {
 		{
 			ctx := NewContext(true, ScanMode_Skip, output, goPath, ruleSet)
-			ctx.Get(".", "gh/u1/p1", false, false)
+			ctx.Get(".", "gh/u1/p1", false, false, false)
 		}
 		{
 			ctx := NewContext(true, ScanMode_Update, output, goPath, ruleSet)
-			ctx.Get(".", "gh/u1/p1", false, false)
+			ctx.Get(".", "gh/u1/p1", false, false, false)
 		}
 	})
 

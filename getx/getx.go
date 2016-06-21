@@ -60,7 +60,43 @@ func (c *Context) AlreadyDone(pkg string) bool {
 	return false
 }
 
-func (c *Context) Get(workingDir, pkg string, depsOnly, tests bool) {
+func stringInSlice(slice []string, s string) bool {
+	for _, e := range slice {
+		if s == e {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *Context) goToMostRecentTag(goDir string) {
+	tags, err := c.gitCtx.Tags(goDir, false)
+	if err != nil {
+		c.output.Warning("Failed to get tags %s:\n%s", goDir, err.Error())
+		return
+	}
+
+	mostRecentTag, err := c.gitCtx.MostRecentTag(goDir, false)
+	if err != nil {
+		c.output.Warning("Failed to get most recent tag %s:\n%s", goDir, err.Error())
+		return
+	} else if mostRecentTag == "" {
+		c.output.Warning("Package %s has no tags", goDir)
+		return
+	}
+
+	if !stringInSlice(tags, mostRecentTag) {
+		//this will disconnect head...
+		err = c.gitCtx.Checkout(goDir, mostRecentTag, false)
+		if err != nil {
+			c.output.Warning("Failed to checkout tag %s (%s):\n%s", goDir, mostRecentTag, err.Error())
+			return
+		}
+	}
+
+}
+
+func (c *Context) Get(workingDir, pkg string, depsOnly, tests, taggedOnly bool) {
 	goCtx := gocmd.New(c.output, c.goPath) //TODO why am i creating this again?
 	goDir, alreadyExists := goCtx.Dir(workingDir, pkg)
 
@@ -81,7 +117,7 @@ func (c *Context) Get(workingDir, pkg string, depsOnly, tests bool) {
 			os.Exit(1)
 		}
 		if rootPkg != pkg {
-			c.Get(workingDir, rootPkg, depsOnly, tests)
+			c.Get(workingDir, rootPkg, depsOnly, tests, taggedOnly)
 			return
 		}
 
@@ -91,6 +127,11 @@ func (c *Context) Get(workingDir, pkg string, depsOnly, tests bool) {
 			os.Exit(1)
 
 		}
+
+		if taggedOnly {
+			c.goToMostRecentTag(goDir)
+		}
+
 		c.donePkgs[pkg] = empty{}
 		c.donePkgs[rootPkg] = empty{}
 
@@ -123,7 +164,7 @@ func (c *Context) Get(workingDir, pkg string, depsOnly, tests bool) {
 			c.donePkgs[pkg] = empty{}
 			return
 		} else if rootPkg != pkg {
-			c.Get(workingDir, rootPkg, depsOnly, tests)
+			c.Get(workingDir, rootPkg, depsOnly, tests, taggedOnly)
 			c.donePkgs[pkg] = empty{}
 			return
 		}
@@ -131,11 +172,21 @@ func (c *Context) Get(workingDir, pkg string, depsOnly, tests bool) {
 		if c.scanMode == ScanMode_Update {
 			gitStatus, err := c.gitCtx.Status(goDir, false)
 			if err == nil && gitStatus == git.Clean {
-				c.gitCtx.Pull(goDir, false)
+				err := c.gitCtx.Checkout(goDir, "master", false)
+				if err != nil {
+					c.output.Warning("Couldn't checkout %s master:\n%s", goDir, err.Error())
+				} else {
+					err := c.gitCtx.Pull(goDir, false)
+					if err != nil {
+						c.output.Warning("Couldn't pull %s:\n%s", goDir, err.Error())
+					} else if taggedOnly {
+						c.goToMostRecentTag(goDir)
+					}
+				}
 			} else if err != nil {
 				c.output.Error("Error running git status on %s", goDir)
 			} else {
-				c.output.Warning("Skipping %s, git status is %s", gitStatus.String())
+				c.output.Warning("Skipping %s, git status is %s", goDir, gitStatus.String())
 			}
 		}
 
@@ -164,14 +215,14 @@ func (c *Context) Get(workingDir, pkg string, depsOnly, tests bool) {
 		for _, impInt := range imports {
 			imp := impInt.(string)
 			if !goCtx.IsStdLib(imp) && !c.AlreadyDone(imp) {
-				c.Get(workingDir, imp, false, false)
+				c.Get(workingDir, imp, false, false, taggedOnly)
 			}
 		}
 		if tests {
 			for _, impInt := range testImports {
 				imp := impInt.(string)
 				if !goCtx.IsStdLib(imp) && !c.AlreadyDone(imp) {
-					c.Get(workingDir, imp, false, false)
+					c.Get(workingDir, imp, false, false, taggedOnly)
 				}
 			}
 		}
