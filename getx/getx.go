@@ -1,7 +1,9 @@
 package getx
 
 import (
+	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/desal/cmd"
@@ -21,26 +23,30 @@ const (
 )
 
 type Context struct {
-	donePkgs set
-	install  bool
-	scanMode ScanMode
-	output   cmd.Output
-	goPath   []string
-	cmdCtx   *cmd.Context
-	gitCtx   *git.Context
-	ruleSet  RuleSet
+	donePkgs   set
+	install    bool
+	scanMode   ScanMode
+	output     cmd.Output
+	goPath     []string
+	cmdCtx     *cmd.Context
+	gitCtx     *git.Context
+	ruleSet    RuleSet
+	applyHooks bool
+	taggedOnly bool
 }
 
-func NewContext(install bool, scanMode ScanMode, output cmd.Output, goPath []string, ruleSet RuleSet) *Context {
+func NewContext(install bool, scanMode ScanMode, output cmd.Output, goPath []string, ruleSet RuleSet, applyHooks, taggedOnly bool) *Context {
 	return &Context{
-		donePkgs: set{},
-		install:  install,
-		scanMode: scanMode,
-		output:   output,
-		goPath:   goPath,
-		cmdCtx:   cmd.NewContext(".", output),
-		gitCtx:   git.New(output),
-		ruleSet:  ruleSet,
+		donePkgs:   set{},
+		install:    install,
+		scanMode:   scanMode,
+		output:     output,
+		goPath:     goPath,
+		cmdCtx:     cmd.NewContext(".", output),
+		gitCtx:     git.New(output),
+		ruleSet:    ruleSet,
+		applyHooks: applyHooks,
+		taggedOnly: taggedOnly,
 	}
 }
 
@@ -96,9 +102,37 @@ func (c *Context) goToMostRecentTag(goDir string) {
 
 }
 
-func (c *Context) Get(workingDir, pkg string, depsOnly, tests, taggedOnly bool) {
+func (c *Context) runHook(ctx *cmd.Context, goDir string, filename string) error {
+	if !c.applyHooks {
+		return nil
+	}
+
+	hook, err := dsutil.SanitisePath(ctx, filepath.Join(goDir, filename))
+	if err != nil {
+		err := fmt.Errorf("Failed to sanitise path: %s", err.Error())
+		c.output.Error(err.Error())
+		return err
+	}
+
+	if !dsutil.CheckPath(hook) {
+		return nil
+	}
+
+	output, err := ctx.ShellExecf("%s", hook)
+	if err != nil {
+		return fmt.Errorf("Hook Error: %s\n%s", err.Error(), output)
+	}
+
+	return nil
+}
+
+//
+
+func (c *Context) Get(workingDir, pkg string, depsOnly, tests bool) {
 	goCtx := gocmd.New(c.output, c.goPath) //TODO why am i creating this again?
 	goDir, alreadyExists := goCtx.Dir(workingDir, pkg)
+
+	hookContext := cmd.NewContext(goDir, c.output) // TODO flags?
 
 	if depsOnly && !alreadyExists {
 		c.output.Error("Can not get dependencies only for package %s, package does not exist", pkg)
@@ -117,7 +151,7 @@ func (c *Context) Get(workingDir, pkg string, depsOnly, tests, taggedOnly bool) 
 			os.Exit(1)
 		}
 		if rootPkg != pkg {
-			c.Get(workingDir, rootPkg, depsOnly, tests, taggedOnly)
+			c.Get(workingDir, rootPkg, depsOnly, tests)
 			return
 		}
 
@@ -128,7 +162,7 @@ func (c *Context) Get(workingDir, pkg string, depsOnly, tests, taggedOnly bool) 
 
 		}
 
-		if taggedOnly {
+		if c.taggedOnly {
 			c.goToMostRecentTag(goDir)
 		}
 
@@ -164,32 +198,45 @@ func (c *Context) Get(workingDir, pkg string, depsOnly, tests, taggedOnly bool) 
 			c.donePkgs[pkg] = empty{}
 			return
 		} else if rootPkg != pkg {
-			c.Get(workingDir, rootPkg, depsOnly, tests, taggedOnly)
+			c.Get(workingDir, rootPkg, depsOnly, tests)
 			c.donePkgs[pkg] = empty{}
 			return
 		}
 
 		if c.scanMode == ScanMode_Update {
 			gitStatus, err := c.gitCtx.Status(goDir, false)
-			if err == nil && gitStatus == git.Clean {
-				err := c.gitCtx.Checkout(goDir, "master", false)
-				if err != nil {
-					c.output.Warning("Couldn't checkout %s master:\n%s", goDir, err.Error())
-				} else {
-					err := c.gitCtx.Pull(goDir, false)
-					if err != nil {
-						c.output.Warning("Couldn't pull %s:\n%s", goDir, err.Error())
-					} else if taggedOnly {
-						c.goToMostRecentTag(goDir)
-					}
-				}
-			} else if err != nil {
+			if err != nil {
 				c.output.Error("Error running git status on %s", goDir)
-			} else {
+				goto finishUpdate
+			}
+
+			if gitStatus != git.Clean {
 				c.output.Warning("Skipping %s, git status is %s", goDir, gitStatus.String())
+				goto finishUpdate
+			}
+
+			err = c.gitCtx.Checkout(goDir, "master", false)
+			if err != nil {
+				c.output.Warning("Couldn't checkout %s master:\n%s", goDir, err.Error())
+				goto finishUpdate
+			}
+
+			err = c.runHook(hookContext, goDir, "get-before-pull.sh")
+			if err != nil {
+				goto finishUpdate
+			}
+
+			err = c.gitCtx.Pull(goDir, false)
+			if err != nil {
+				c.output.Warning("Couldn't pull %s:\n%s", goDir, err.Error())
+				goto finishUpdate
+			}
+
+			if c.taggedOnly {
+				c.goToMostRecentTag(goDir)
 			}
 		}
-
+	finishUpdate:
 		c.donePkgs[rootPkg] = empty{}
 		c.donePkgs[pkg] = empty{}
 
@@ -215,28 +262,35 @@ func (c *Context) Get(workingDir, pkg string, depsOnly, tests, taggedOnly bool) 
 		for _, impInt := range imports {
 			imp := impInt.(string)
 			if !goCtx.IsStdLib(imp) && !c.AlreadyDone(imp) {
-				c.Get(workingDir, imp, false, false, taggedOnly)
+				c.Get(workingDir, imp, false, false)
 			}
 		}
 		if tests {
 			for _, impInt := range testImports {
 				imp := impInt.(string)
 				if !goCtx.IsStdLib(imp) && !c.AlreadyDone(imp) {
-					c.Get(workingDir, imp, false, false, taggedOnly)
+					c.Get(workingDir, imp, false, false)
 				}
 			}
 		}
 	}
-	if c.install {
-		//attempt to install everything; takes advantage of multiple cores
-		//but will bomb out if some of the sub pkgs are particularly broken
-		//if that happens, attempt installing one by one instead
-		err := goCtx.Install(workingDir, pkg+"/...")
-		if err != nil {
-			for importPath, _ := range list {
-				goCtx.Install(workingDir, importPath)
-			}
-		}
 
+	//Before install runs even if we don't install, Don't install if hook fails.
+	err := c.runHook(hookContext, goDir, "get-before-install.sh")
+	if err != nil || !c.install {
+		return
 	}
+
+	//attempt to install everything; takes advantage of multiple cores
+	//but will bomb out if some of the sub pkgs are particularly broken
+	//if that happens, attempt installing one by one instead
+	err = goCtx.Install(workingDir, pkg+"/...")
+	if err != nil {
+		for importPath, _ := range list {
+			goCtx.Install(workingDir, importPath)
+		}
+	}
+
+	//Post install always runs, even if errors (for the case where a subpkg fails)
+	c.runHook(hookContext, goDir, "get-after-install.sh")
 }

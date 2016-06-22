@@ -14,8 +14,12 @@ import (
 )
 
 type Package struct {
-	ImportPath string
-	Imports    []string
+	ImportPath        string
+	Imports           []string
+	hookBeforePull    string
+	hookBeforeInstall string
+	hookAfterInstall  string
+	gitIgnore         string
 }
 
 type Repo struct {
@@ -31,7 +35,7 @@ type Repos struct {
 func NewRepos(output cmd.Output) Repos { return Repos{output: output} }
 
 func Pkg(importPath string, imports ...string) Package {
-	return Package{importPath, imports}
+	return Package{importPath, imports, "", "", ""}
 }
 
 func (r *Repos) AddRepo(basePath string, packages ...Package) {
@@ -79,7 +83,7 @@ func (r *Repos) Test(f func(goPath []string, ruleSet RuleSet)) set {
 
 func mockPackage(dir, pkgName string, imports []string) {
 	os.MkdirAll(dir, 0644)
-	f, err := os.OpenFile(filepath.Join(dir, "gen.go"), os.O_CREATE|os.O_TRUNC|os.O_TRUNC, 0644)
+	f, err := os.OpenFile(filepath.Join(dir, "gen.go"), os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		panic(err)
 	}
@@ -113,6 +117,42 @@ func MockPackageBareGit(rootDir string, repo Repo, output cmd.Output) Rule {
 		}
 		relativePkg := pkg.ImportPath[len(repo.BasePath):]
 		mockPackage(filepath.Join(repoPath, relativePkg), pkg.ImportPath, pkg.Imports)
+		if pkg.gitIgnore != "" {
+			gitIgnore, err := os.OpenFile(filepath.Join(repoPath, ".gitignore"), os.O_CREATE|os.O_TRUNC, 0644)
+			if err != nil {
+				panic(err)
+			}
+			fmt.Fprint(gitIgnore, pkg.gitIgnore)
+			gitIgnore.Close()
+		}
+
+		if pkg.hookBeforePull != "" {
+			hookBeforePull, err := os.OpenFile(filepath.Join(repoPath, "get-before-pull.sh"), os.O_CREATE|os.O_TRUNC, 0644)
+			if err != nil {
+				panic(err)
+			}
+			fmt.Fprint(hookBeforePull, pkg.hookBeforePull)
+			hookBeforePull.Close()
+		}
+
+		if pkg.hookBeforeInstall != "" {
+			hookBeforeInstall, err := os.OpenFile(filepath.Join(repoPath, "get-before-install.sh"), os.O_CREATE|os.O_TRUNC, 0644)
+			if err != nil {
+				panic(err)
+			}
+			fmt.Fprint(hookBeforeInstall, pkg.hookBeforeInstall)
+			hookBeforeInstall.Close()
+		}
+
+		if pkg.hookAfterInstall != "" {
+			hookAfterInstall, err := os.OpenFile(filepath.Join(repoPath, "get-after-install.sh"), os.O_CREATE|os.O_TRUNC, 0644)
+			if err != nil {
+				panic(err)
+			}
+			fmt.Fprint(hookAfterInstall, pkg.hookAfterInstall)
+			hookAfterInstall.Close()
+		}
+
 	}
 
 	repoCtx.Execf("git add -A")
