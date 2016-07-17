@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/desal/cmd"
 	"github.com/desal/dsutil"
 	"github.com/desal/go-getx/getx"
 	"github.com/desal/gocmd"
@@ -46,21 +45,32 @@ func main() {
 			os.Exit(1)
 		}
 
-		output := cmd.NewStdOutput(*verbose, richtext.Ansi())
+		format := richtext.Ansi()
+		flags := []getx.Flag{}
 
-		var scanMode getx.ScanMode
 		if *fetch {
-			scanMode = getx.ScanMode_DeepFetch
+			flags = append(flags, getx.DeepScan)
 		} else if *update {
-			scanMode = getx.ScanMode_Update
-		} else {
-			scanMode = getx.ScanMode_Skip
+			flags = append(flags, getx.Update)
 		}
 
-		goPath := gocmd.FromEnv(output)
-		ctx := getx.NewContext(*install, scanMode, output, goPath, ruleSet)
+		if *install {
+			flags = append(flags, getx.Install)
+		}
+
+		if *verbose {
+			flags = append(flags, getx.Verbose)
+		}
+
+		goPath, err := gocmd.EnvGoPath()
+		if err != nil {
+			format.ErrorLine("%s", err)
+			os.Exit(1)
+		}
+
+		ctx := getx.New(format, goPath, ruleSet, flags...)
 		for _, pkg := range *pkgs {
-			ctx.Get(".", pkg, *dependencies, *tests, false)
+			ctx.Get(".", pkg, *dependencies, *tests)
 		}
 	}
 

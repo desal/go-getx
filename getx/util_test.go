@@ -11,6 +11,7 @@ import (
 
 	"github.com/desal/cmd"
 	"github.com/desal/dsutil"
+	"github.com/desal/richtext"
 )
 
 type Package struct {
@@ -19,26 +20,31 @@ type Package struct {
 }
 
 type Repo struct {
-	BasePath string
-	Packages []Package
+	BasePath          string
+	Packages          []Package
+	hookBeforeUpdate  string
+	hookBeforeInstall string
+	hookAfterInstall  string
+	gitIgnore         string
 }
 
 type Repos struct {
-	output cmd.Output
+	format richtext.Format
 	Repos  []Repo
 }
 
-func NewRepos(output cmd.Output) Repos { return Repos{output: output} }
+func NewRepos(format richtext.Format) Repos { return Repos{format: format} }
 
 func Pkg(importPath string, imports ...string) Package {
-	return Package{importPath, imports}
+	return Package{ImportPath: importPath, Imports: imports}
 }
 
-func (r *Repos) AddRepo(basePath string, packages ...Package) {
-	r.Repos = append(r.Repos, Repo{basePath, packages})
+func (r *Repos) AddRepo(basePath string, packages ...Package) *Repo {
+	r.Repos = append(r.Repos, Repo{BasePath: basePath, Packages: packages})
+	return &r.Repos[len(r.Repos)-1]
 }
 
-func (r *Repos) Test(f func(goPath []string, ruleSet RuleSet)) set {
+func (r *Repos) Test(f func(goPath []string, ruleSet RuleSet)) stringSet {
 	gitDir, err := ioutil.TempDir("", "gogetx_test")
 	if err != nil {
 		panic(err)
@@ -47,7 +53,7 @@ func (r *Repos) Test(f func(goPath []string, ruleSet RuleSet)) set {
 
 	rules := []Rule{}
 	for _, repo := range r.Repos {
-		rules = append(rules, MockPackageBareGit(gitDir, repo, r.output))
+		rules = append(rules, MockPackageBareGit(gitDir, repo, r.format))
 	}
 
 	mockGoPath, err := ioutil.TempDir("", "gogetx_test")
@@ -62,15 +68,17 @@ func (r *Repos) Test(f func(goPath []string, ruleSet RuleSet)) set {
 	}
 	MockEnv(mockGoPath, RuleSet{rules}, f)
 
-	cmdCtx := cmd.NewContext(mockGoPath, r.output, cmd.Must)
+	cmdCtx := cmd.New(mockGoPath, r.format, cmd.Warn)
 
-	res, _ := cmdCtx.Execf("find . -not ( -type d -name .git -prune ) -type f")
-
-	res_noarch := strings.Replace(res, "./pkg/"+runtime.GOOS+"_"+runtime.GOARCH, "./pkg", -1)
+	o, _, err := cmdCtx.Execf(`find . -not \( -type d -name .git -prune \) -type f`)
+	if err != nil {
+		panic(err)
+	}
+	res_noarch := strings.Replace(o, "./pkg/"+runtime.GOOS+"_"+runtime.GOARCH, "./pkg", -1)
 	res_noexe := strings.Replace(res_noarch, ".exe", "", -1)
 	res_clean := dsutil.SplitLines(res_noexe, true)
 
-	result := set{}
+	result := stringSet{}
 	for _, e := range res_clean {
 		result[e] = empty{}
 	}
@@ -79,7 +87,7 @@ func (r *Repos) Test(f func(goPath []string, ruleSet RuleSet)) set {
 
 func mockPackage(dir, pkgName string, imports []string) {
 	os.MkdirAll(dir, 0644)
-	f, err := os.OpenFile(filepath.Join(dir, "gen.go"), os.O_CREATE|os.O_TRUNC|os.O_TRUNC, 0644)
+	f, err := os.OpenFile(filepath.Join(dir, "gen.go"), os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		panic(err)
 	}
@@ -92,19 +100,37 @@ func mockPackage(dir, pkgName string, imports []string) {
 	}
 }
 
+func mockFile(dir, filename, contents string) {
+	if contents == "" {
+		return
+	}
+
+	os.MkdirAll(dir, 0644)
+	f, err := os.OpenFile(filepath.Join(dir, filename), os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
+		panic(err)
+	}
+	defer f.Close()
+
+	fmt.Fprint(f, contents)
+}
+
 //creates a mocked package in a bare git repo.
-func MockPackageBareGit(rootDir string, repo Repo, output cmd.Output) Rule {
+func MockPackageBareGit(rootDir string, repo Repo, format richtext.Format) Rule {
 	escapedPkg := strings.Replace(repo.BasePath, "/", "_", -1)
 	barePath := filepath.Join(rootDir, escapedPkg+".git")
 	repoPath := filepath.Join(rootDir, escapedPkg)
 	os.MkdirAll(barePath, 0644)
 
-	bareCtx := cmd.NewContext(barePath, output, cmd.Must)
-	rootCtx := cmd.NewContext(rootDir, output, cmd.Must)
-	repoCtx := cmd.NewContext(repoPath, output, cmd.Must)
+	bareCtx := cmd.New(barePath, format, cmd.Warn)
+	rootCtx := cmd.New(rootDir, format, cmd.Warn)
+	repoCtx := cmd.New(repoPath, format, cmd.Warn)
 
 	bareCtx.Execf("git --bare init")
-	rootCtx.Execf("git clone %s.git", escapedPkg)
+	_, _, err := rootCtx.Execf("git clone %s.git", dsutil.PosixPath(escapedPkg))
+	if err != nil {
+		panic(err)
+	}
 
 	for _, pkg := range repo.Packages {
 		//Check the package actually belongs in the repo
@@ -114,12 +140,16 @@ func MockPackageBareGit(rootDir string, repo Repo, output cmd.Output) Rule {
 		relativePkg := pkg.ImportPath[len(repo.BasePath):]
 		mockPackage(filepath.Join(repoPath, relativePkg), pkg.ImportPath, pkg.Imports)
 	}
+	mockFile(repoPath, "get-before-update.sh", repo.hookBeforeUpdate)
+	mockFile(repoPath, "get-before-install.sh", repo.hookBeforeInstall)
+	mockFile(repoPath, "get-after-install.sh", repo.hookAfterInstall)
+	mockFile(repoPath, ".gitignore", repo.gitIgnore)
 
 	repoCtx.Execf("git add -A")
 	repoCtx.Execf(`git commit -m "init"`)
 	repoCtx.Execf("git push")
 
-	return NewRule(repo.BasePath, barePath)
+	return NewRule(repo.BasePath, dsutil.PosixPath(barePath))
 }
 
 func MockEnv(mockGoPath string, ruleSet RuleSet, f func(goPath []string, ruleSet RuleSet)) {
