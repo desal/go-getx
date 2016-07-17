@@ -62,7 +62,7 @@ func (r *Repos) Test(f func(goPath []string, ruleSet RuleSet)) stringSet {
 	}
 	defer os.RemoveAll(mockGoPath)
 
-	err = os.MkdirAll(filepath.Join(mockGoPath, "src"), 0644)
+	err = os.MkdirAll(filepath.Join(mockGoPath, "src"), 0755)
 	if err != nil {
 		panic(err)
 	}
@@ -86,8 +86,8 @@ func (r *Repos) Test(f func(goPath []string, ruleSet RuleSet)) stringSet {
 }
 
 func mockPackage(dir, pkgName string, imports []string) {
-	os.MkdirAll(dir, 0644)
-	f, err := os.OpenFile(filepath.Join(dir, "gen.go"), os.O_CREATE|os.O_TRUNC, 0644)
+	os.MkdirAll(dir, 0755)
+	f, err := os.OpenFile(filepath.Join(dir, "gen.go"), os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
 	if err != nil {
 		panic(err)
 	}
@@ -105,8 +105,8 @@ func mockFile(dir, filename, contents string) {
 		return
 	}
 
-	os.MkdirAll(dir, 0644)
-	f, err := os.OpenFile(filepath.Join(dir, filename), os.O_CREATE|os.O_TRUNC, 0644)
+	os.MkdirAll(dir, 0755)
+	f, err := os.OpenFile(filepath.Join(dir, filename), os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0755)
 	if err != nil {
 		panic(err)
 	}
@@ -120,7 +120,7 @@ func MockPackageBareGit(rootDir string, repo Repo, format richtext.Format) Rule 
 	escapedPkg := strings.Replace(repo.BasePath, "/", "_", -1)
 	barePath := filepath.Join(rootDir, escapedPkg+".git")
 	repoPath := filepath.Join(rootDir, escapedPkg)
-	os.MkdirAll(barePath, 0644)
+	os.MkdirAll(barePath, 0755)
 
 	bareCtx := cmd.New(barePath, format, cmd.Warn)
 	rootCtx := cmd.New(rootDir, format, cmd.Warn)

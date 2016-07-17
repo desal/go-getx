@@ -221,7 +221,7 @@ func (c *Context) inspect(workingDir, pkg, goDir string, depsOnly, tests bool) e
 		return c.errorf("Git top level (%s) of package %s, not below src (%s)",
 			gitTopLevel, pkg, srcPath)
 	}
-	rootPkg := strings.TrimPrefix(gitTopLevel, srcPath)
+	rootPkg := filepath.ToSlash(strings.TrimPrefix(gitTopLevel, srcPath))
 
 	if c.AlreadyDone(rootPkg) {
 		//Cache the result to prevent running the git command again
@@ -333,14 +333,20 @@ func (c *Context) Get(workingDir, pkg string, depsOnly, tests bool) error {
 		for _, impInt := range imports {
 			imp := impInt.(string)
 			if !c.goCtx.IsStdLib(imp) && !c.AlreadyDone(imp) {
-				c.Get(workingDir, imp, false, false)
+				err := c.Get(workingDir, imp, false, false)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if tests {
 			for _, impInt := range testImports {
 				imp := impInt.(string)
 				if !c.goCtx.IsStdLib(imp) && !c.AlreadyDone(imp) {
-					c.Get(workingDir, imp, false, false)
+					err := c.Get(workingDir, imp, false, false)
+					if err != nil {
+						return err
+					}
 				}
 			}
 		}
@@ -359,7 +365,7 @@ func (c *Context) Get(workingDir, pkg string, depsOnly, tests bool) error {
 		err := c.goCtx.Install(workingDir, pkg+"/...")
 		if err != nil {
 			for importPath, _ := range list {
-				c.goCtx.Install(workingDir, importPath)
+				_ = c.goCtx.Install(workingDir, importPath)
 			}
 		}
 	}

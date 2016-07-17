@@ -45,7 +45,7 @@ func main() {
 			os.Exit(1)
 		}
 
-		format := richtext.Ansi()
+		format := richtext.New()
 		flags := []getx.Flag{}
 
 		if *fetch {
