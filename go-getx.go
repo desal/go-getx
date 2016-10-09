@@ -19,16 +19,17 @@ import (
 
 func main() {
 	app := cli.App("go-getx", "go get extended")
-
-	app.Spec = "[-d] [-v] [-i] [-f | -u] [-t] [PKG...]"
+	app.Spec = "[-d] [-v] [-i] [-f | -u] [-t] [--goflags] [PKG...]"
 
 	var (
 		dependencies = app.BoolOpt("d deps-only", false, "Do not fetch named packages, only their dependencies")
 		verbose      = app.BoolOpt("v verbose", false, "Verbose output")
+		veryverbose  = app.BoolOpt("vv veryverbose", false, "Very Verbose output (outputs executed commansd)")
 		install      = app.BoolOpt("i install", false, "Install all fetched packages (will continue if package fails to compile)")
 		fetch        = app.BoolOpt("f fetch-missing", false, "Performs a deep search for any missing dependencies and fetches them")
 		update       = app.BoolOpt("u update", false, "Updates package, and all transisitive depnediencs where possible")
 		tests        = app.BoolOpt("t tests", false, "Fetches tests for the named packages")
+		buildFlags   = app.StringOpt("goflags", "", "Additional flags to parse to go install (e.g. '-tags netgo')")
 
 		pkgs = app.StringsArg("PKG", nil, "Packages")
 	)
@@ -47,6 +48,7 @@ func main() {
 
 		format := richtext.New()
 		flags := []getx.Flag{}
+		goFlags := []gocmd.Flag{}
 
 		if *fetch {
 			flags = append(flags, getx.DeepScan)
@@ -60,6 +62,10 @@ func main() {
 
 		if *verbose {
 			flags = append(flags, getx.Verbose)
+		} else if *veryverbose {
+			flags = append(flags, getx.Verbose)
+			flags = append(flags, getx.CmdVerbose)
+			goFlags = append(goFlags, gocmd.Verbose)
 		}
 
 		goPath, err := gocmd.EnvGoPath()
@@ -68,9 +74,25 @@ func main() {
 			os.Exit(1)
 		}
 
-		ctx := getx.New(format, goPath, ruleSet, flags...)
+		ctx := getx.New(format, goPath, ruleSet, *buildFlags, flags...)
 		for _, pkg := range *pkgs {
 			ctx.Get(".", pkg, *dependencies, *tests)
+		}
+
+		if *install {
+			goCtx := gocmd.New(format, goPath, *buildFlags, goFlags...)
+			ok := true
+			for _, pkg := range *pkgs {
+				err := goCtx.Install(".", pkg)
+				if err != nil {
+					ok = false
+					format.ErrorLine("Failed to install %s: %s", pkg, err.Error())
+				}
+			}
+
+			if !ok {
+				os.Exit(1)
+			}
 		}
 	}
 

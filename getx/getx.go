@@ -34,16 +34,17 @@ type (
 )
 
 const (
-	_        Flag = iota
-	DeepScan      //When traversing folders, iteratively scan into present folders
-	Update        //Update any found dependency to latest version
-	Install
-	Warn
-	MustExit
-	MustPanic
-	Verbose
-	ApplyHooks
-	TaggedOnly
+	_          Flag = iota
+	DeepScan        // When traversing folders, iteratively scan into present folders
+	Update          // Update any found dependency to latest version
+	Install         //
+	Warn            //
+	MustExit        //
+	MustPanic       //
+	Verbose         //
+	CmdVerbose      // Also displays commands being executed
+	ApplyHooks      //
+	TaggedOnly      //
 )
 
 func (fs flagSet) Checked(flag Flag) bool {
@@ -52,7 +53,7 @@ func (fs flagSet) Checked(flag Flag) bool {
 	return ok
 }
 
-func New(format richtext.Format, goPath []string, ruleSet RuleSet, flags ...Flag) *Context {
+func New(format richtext.Format, goPath []string, ruleSet RuleSet, buildFlags string, flags ...Flag) *Context {
 	c := &Context{
 		donePkgs: stringSet{},
 		format:   format,
@@ -71,16 +72,15 @@ func New(format richtext.Format, goPath []string, ruleSet RuleSet, flags ...Flag
 		case MustPanic:
 			cmdFlags = append(cmdFlags, cmd.MustPanic)
 			gitFlags = append(gitFlags, git.MustPanic)
-			goFlags = append(goFlags, gocmd.Warn)
 		case MustExit:
 			cmdFlags = append(cmdFlags, cmd.MustExit)
 			gitFlags = append(gitFlags, git.MustExit)
-			goFlags = append(goFlags, gocmd.Warn)
 		case Warn:
 			cmdFlags = append(cmdFlags, cmd.Warn)
 			gitFlags = append(gitFlags, git.Warn)
-			goFlags = append(goFlags, gocmd.Warn)
 		case Verbose:
+		case CmdVerbose:
+			goFlags = append(goFlags, gocmd.Warn)
 			cmdFlags = append(cmdFlags, cmd.Verbose)
 			gitFlags = append(gitFlags, git.Verbose)
 			goFlags = append(goFlags, gocmd.Verbose)
@@ -89,7 +89,7 @@ func New(format richtext.Format, goPath []string, ruleSet RuleSet, flags ...Flag
 
 	c.cmdCtx = cmd.New(".", format, cmdFlags...)
 	c.gitCtx = git.New(format, gitFlags...)
-	c.goCtx = gocmd.New(format, goPath, goFlags...)
+	c.goCtx = gocmd.New(format, goPath, buildFlags, goFlags...)
 
 	return c
 }
@@ -107,8 +107,14 @@ func (c *Context) errorf(s string, a ...interface{}) error {
 }
 
 func (c *Context) warnf(s string, a ...interface{}) {
-	if c.flags.Checked(Warn) {
+	if c.flags.Checked(Warn) || c.flags.Checked(Verbose) {
 		c.format.WarningLine(s, a...)
+	}
+}
+
+func (c *Context) verbosef(s string, a ...interface{}) {
+	if c.flags.Checked(Verbose) {
+		c.format.PrintLine(s, a...)
 	}
 }
 
@@ -168,57 +174,57 @@ func (c *Context) goToMostRecentTag(pkg, goDir string) error {
 	}
 }
 
-func (c *Context) clone(workingDir, pkg, goDir string, depsOnly, tests bool) error {
+func (c *Context) clone(workingDir, pkg, goDir string, depsOnly, tests bool) (bool, error) {
 	rootPkg, gitUrl, err := c.ruleSet.GetUrl(pkg)
 	if c.AlreadyDone(rootPkg) {
 		c.donePkgs[pkg] = empty{}
-		return nil
+		return false, nil
 	}
 	if err != nil {
-		return c.errorf("%s", err.Error())
+		return true, c.errorf("%s", err.Error())
 	}
 	if rootPkg != pkg {
-		return c.Get(workingDir, rootPkg, depsOnly, tests)
+		return false, c.Get(workingDir, rootPkg, depsOnly, tests)
 	}
 
 	err = c.gitCtx.Clone(goDir, gitUrl)
 	if err != nil {
-		return c.errorf("Failed to clone %s:\n%s", gitUrl, err.Error())
+		return true, c.errorf("Failed to clone %s:\n%s", gitUrl, err.Error())
 	}
 
 	if c.flags.Checked(TaggedOnly) {
 		err := c.goToMostRecentTag(pkg, goDir)
 		if err != nil {
-			return err
+			return true, err
 		}
 	}
 
 	c.donePkgs[pkg] = empty{}
 	c.donePkgs[rootPkg] = empty{}
-	return nil
+	return true, nil
 }
 
-func (c *Context) inspect(workingDir, pkg, goDir string, depsOnly, tests bool) error {
+func (c *Context) inspect(workingDir, pkg, goDir string, depsOnly, tests bool) (bool, error) {
 	isGit := c.gitCtx.IsGit(goDir)
 	if !isGit {
-		return c.errorf("Package %s (%s) is not a git repository", pkg, goDir)
+		return true, c.errorf("Package %s (%s) is not a git repository", pkg, goDir)
 	}
 
 	gitTopLevel, err := c.gitCtx.TopLevel(goDir)
 	if err != nil {
 		c.donePkgs[pkg] = empty{}
-		return c.errorf("%s", err.Error())
+		return true, c.errorf("%s", err.Error())
 	}
 
 	nativePkg := filepath.FromSlash(pkg)
 
 	if !strings.HasSuffix(goDir, nativePkg) {
-		return c.errorf("Package %s (%s) not part of path (%s)", pkg, nativePkg, goDir)
+		return true, c.errorf("Package %s (%s) not part of path (%s)", pkg, nativePkg, goDir)
 	}
 	srcPath := strings.TrimSuffix(goDir, nativePkg)
 
 	if !strings.HasPrefix(gitTopLevel, srcPath) {
-		return c.errorf("Git top level (%s) of package %s, not below src (%s)",
+		return true, c.errorf("Git top level (%s) of package %s, not below src (%s)",
 			gitTopLevel, pkg, srcPath)
 	}
 	rootPkg := filepath.ToSlash(strings.TrimPrefix(gitTopLevel, srcPath))
@@ -226,24 +232,24 @@ func (c *Context) inspect(workingDir, pkg, goDir string, depsOnly, tests bool) e
 	if c.AlreadyDone(rootPkg) {
 		//Cache the result to prevent running the git command again
 		c.donePkgs[pkg] = empty{}
-		return nil
+		return false, nil
 	} else if rootPkg != pkg {
 		//Costs an extra call out to git, but keeps the code way more managable
 		err := c.Get(workingDir, rootPkg, depsOnly, tests)
 		if err != nil {
-			return err
+			return false, err
 		}
 		c.donePkgs[pkg] = empty{}
-		return nil
+		return false, nil
 	}
 
 	//Updates are only done if possible. Not an error to fail.
 	if c.flags.Checked(Update) {
 		err = c.runHook(pkg, goDir, "get-before-update.sh")
 		if err != nil {
-			return err
+			return true, err
 		} else if gitStatus, err := c.gitCtx.Status(goDir); err != nil {
-			return c.errorf("Failed to get git status for package %s (%s): %s",
+			return true, c.errorf("Failed to get git status for package %s (%s): %s",
 				pkg, goDir, err.Error())
 		} else if gitStatus != git.Clean {
 			c.warnf("Not updating package %s (%s), git status is %s",
@@ -257,7 +263,7 @@ func (c *Context) inspect(workingDir, pkg, goDir string, depsOnly, tests bool) e
 		} else if c.flags.Checked(TaggedOnly) {
 			err := c.goToMostRecentTag(pkg, goDir)
 			if err != nil {
-				return err
+				return true, err
 			}
 		}
 	}
@@ -265,7 +271,7 @@ func (c *Context) inspect(workingDir, pkg, goDir string, depsOnly, tests bool) e
 	c.donePkgs[rootPkg] = empty{}
 	c.donePkgs[pkg] = empty{}
 
-	return nil
+	return true, nil
 }
 
 func (c *Context) runHook(pkg, goDir, filename string) error {
@@ -298,17 +304,21 @@ func (c *Context) Get(workingDir, pkg string, depsOnly, tests bool) error {
 		//Can do nothing
 		c.donePkgs[pkg] = empty{}
 	} else if !alreadyExists {
-		err := c.clone(workingDir, pkg, goDir, depsOnly, tests)
+		shouldContinue, err := c.clone(workingDir, pkg, goDir, depsOnly, tests)
 		if err != nil {
 			return err
+		} else if !shouldContinue {
+			return nil
 		}
 	} else if !c.flags.Checked(Update) && !c.flags.Checked(DeepScan) {
 		c.donePkgs[pkg] = empty{}
 		return nil
 	} else {
-		err := c.inspect(workingDir, pkg, goDir, depsOnly, tests)
+		shouldContinue, err := c.inspect(workingDir, pkg, goDir, depsOnly, tests)
 		if err != nil {
 			return err
+		} else if !shouldContinue {
+			return nil
 		}
 	}
 
@@ -358,6 +368,7 @@ func (c *Context) Get(workingDir, pkg string, depsOnly, tests bool) error {
 		return err
 	}
 
+	failed := []string{}
 	if c.flags.Checked(Install) {
 		//attempt to install everything; takes advantage of multiple cores
 		//but will bomb out if some of the sub pkgs are particularly broken
@@ -365,11 +376,29 @@ func (c *Context) Get(workingDir, pkg string, depsOnly, tests bool) error {
 		err := c.goCtx.Install(workingDir, pkg+"/...")
 		if err != nil {
 			for importPath, _ := range list {
-				_ = c.goCtx.Install(workingDir, importPath)
+				err := c.goCtx.Install(workingDir, importPath)
+				if err != nil {
+					//TODO check this part works:
+					if strings.HasPrefix(importPath, pkg+"/") {
+						failed = append(failed, ".../"+strings.TrimPrefix(importPath, pkg+"/"))
+					} else {
+						failed = append(failed, importPath)
+					}
+				}
 			}
+			c.warnf("%s/... [Failed: %s]", pkg, strings.Join(failed, ", "))
 		}
 	}
 
 	//Post install always runs, even if errors (for the case where a subpkg fails)
-	return c.runHook(pkg, goDir, "get-after-install.sh")
+	err = c.runHook(pkg, goDir, "get-after-install.sh")
+	if err != nil {
+		return err
+	}
+
+	if len(failed) == 0 {
+		c.verbosef("%s", pkg)
+	}
+
+	return nil
 }

@@ -4,9 +4,9 @@ package getx
 
 import "fmt"
 
-const _Flag_name = "DeepScanUpdateInstallWarnMustExitMustPanicVerboseApplyHooksTaggedOnly"
+const _Flag_name = "DeepScanUpdateInstallWarnMustExitMustPanicVerboseCmdVerboseApplyHooksTaggedOnly"
 
-var _Flag_index = [...]uint8{0, 8, 14, 21, 25, 33, 42, 49, 59, 69}
+var _Flag_index = [...]uint8{0, 8, 14, 21, 25, 33, 42, 49, 59, 69, 79}
 
 func (i Flag) String() string {
 	i -= 1

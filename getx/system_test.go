@@ -1,6 +1,7 @@
 package getx
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/desal/richtext"
@@ -21,8 +22,9 @@ func TestSingleRepo(t *testing.T) {
 	repos.AddRepo("gh/u2/p2",
 		Pkg("gh/u2/p2", "gh/u1/p1/s1", "gh/u1/p1", "gh/u1/p1/s2"))
 
+	buf := &bytes.Buffer{}
 	fileList := repos.Test(func(goPath []string, ruleSet RuleSet) {
-		ctx := New(format, goPath, ruleSet, MustPanic, Install)
+		ctx := New(richtext.Debug(buf), goPath, ruleSet, "", Verbose, MustPanic, Install)
 		ctx.Get(".", "gh/u1/p1/s2", false, false)
 	})
 
@@ -35,6 +37,7 @@ func TestSingleRepo(t *testing.T) {
 		"./src/gh/u1/p1/s2/gen.go": empty{},
 	}
 	assert.Equal(t, expected, fileList)
+	assert.Equal(t, "gh/u1/p1\n", buf.String())
 
 }
 
@@ -52,8 +55,9 @@ func TestDependentRepo(t *testing.T) {
 	repos.AddRepo("gh/u2/p2",
 		Pkg("gh/u2/p2", "gh/u1/p1/s1", "gh/u1/p1", "gh/u1/p1/s2"))
 
+	buf := &bytes.Buffer{}
 	fileList := repos.Test(func(goPath []string, ruleSet RuleSet) {
-		ctx := New(format, goPath, ruleSet, MustPanic, Install)
+		ctx := New(richtext.Debug(buf), goPath, ruleSet, "", Verbose, MustPanic, Install)
 		ctx.Get(".", "gh/u2/p2", false, false)
 	})
 
@@ -68,6 +72,7 @@ func TestDependentRepo(t *testing.T) {
 		"./src/gh/u2/p2/gen.go":    empty{},
 	}
 	assert.Equal(t, expected, fileList)
+	assert.Equal(t, "gh/u1/p1\ngh/u2/p2\n", buf.String())
 }
 
 func TestMultiDepOk(t *testing.T) {
@@ -84,8 +89,9 @@ func TestMultiDepOk(t *testing.T) {
 	repos.AddRepo("gh/u2/p2",
 		Pkg("gh/u2/p2", "gh/u1/p1/s1", "gh/u1/p1", "gh/u2/p1"))
 
+	buf := &bytes.Buffer{}
 	fileList := repos.Test(func(goPath []string, ruleSet RuleSet) {
-		ctx := New(format, goPath, ruleSet, MustPanic, Install)
+		ctx := New(richtext.Debug(buf), goPath, ruleSet, "", Verbose, MustPanic, Install)
 		ctx.Get(".", "gh/u2/p2", false, false)
 	})
 
@@ -102,6 +108,7 @@ func TestMultiDepOk(t *testing.T) {
 		"./src/gh/u2/p2/gen.go":    empty{},
 	}
 	assert.Equal(t, expected, fileList)
+	assert.Equal(t, "gh/u1/p1\ngh/u2/p1\ngh/u2/p2\n", buf.String())
 }
 
 func TestMultiDepPartialFail(t *testing.T) {
@@ -118,8 +125,9 @@ func TestMultiDepPartialFail(t *testing.T) {
 	repos.AddRepo("gh/u2/p2",
 		Pkg("gh/u2/p2", "gh/u1/p1/s1", "gh/u1/p1", "gh/u2/p1"))
 
+	buf := &bytes.Buffer{}
 	fileList := repos.Test(func(goPath []string, ruleSet RuleSet) {
-		ctx := New(format, goPath, ruleSet, MustPanic, Install)
+		ctx := New(richtext.Debug(buf), goPath, ruleSet, "", Verbose, MustPanic, Install)
 		ctx.Get(".", "gh/u2/p2", false, false)
 	})
 
@@ -136,6 +144,7 @@ func TestMultiDepPartialFail(t *testing.T) {
 		"./src/gh/u2/p2/gen.go":    empty{},
 	}
 	assert.Equal(t, expected, fileList)
+	assert.Equal(t, "[WARN]gh/u1/p1/... [Failed: .../s2][]\ngh/u2/p1\ngh/u2/p2\n", buf.String())
 }
 
 func TestDepNoRootUpgrade(t *testing.T) {
@@ -147,14 +156,17 @@ func TestDepNoRootUpgrade(t *testing.T) {
 		Pkg("gh/u1/p1", "gh/u1/p2/s1"))
 	repos.AddRepo("gh/u1/p2",
 		Pkg("gh/u1/p2/s1"))
+
 	//Test Get
+	buf1 := &bytes.Buffer{}
+	buf2 := &bytes.Buffer{}
 	fileList := repos.Test(func(goPath []string, ruleSet RuleSet) {
 		{
-			ctx := New(format, goPath, ruleSet)
+			ctx := New(richtext.Debug(buf1), goPath, ruleSet, "", Verbose)
 			ctx.Get(".", "gh/u1/p1", false, false)
 		}
 		{
-			ctx := New(format, goPath, ruleSet, Update, MustPanic, Install)
+			ctx := New(richtext.Debug(buf2), goPath, ruleSet, "", Verbose, Update, MustPanic, Install)
 			ctx.Get(".", "gh/u1/p1", false, false)
 		}
 	})
@@ -166,6 +178,8 @@ func TestDepNoRootUpgrade(t *testing.T) {
 		"./src/gh/u1/p2/s1/gen.go": empty{},
 	}
 	assert.Equal(t, expected, fileList)
+	assert.Equal(t, "gh/u1/p2\ngh/u1/p1\n", buf1.String())
+	assert.Equal(t, "gh/u1/p2\ngh/u1/p1\n", buf2.String())
 
 }
 
@@ -200,10 +214,12 @@ touch .hook3a`
 `
 
 	//Install
+	buf1 := &bytes.Buffer{}
 	fileList1 := repos.Test(func(goPath []string, ruleSet RuleSet) {
-		ctx := New(format, goPath, ruleSet, Verbose, MustPanic, Install, ApplyHooks)
+		ctx := New(richtext.Debug(buf1), goPath, ruleSet, "", Verbose, MustPanic, Install, ApplyHooks)
 		ctx.Get(".", "hookrepo", false, false)
 	})
+	assert.Equal(t, "hookrepo\n", buf1.String())
 
 	expected1 := stringSet{
 		"./pkg/hookrepo.a":                     empty{},
@@ -218,17 +234,21 @@ touch .hook3a`
 	assert.Equal(t, expected1, fileList1)
 
 	//Install AND Upgrade
+	buf2 := &bytes.Buffer{}
+	buf3 := &bytes.Buffer{}
 	fileList2 := repos.Test(func(goPath []string, ruleSet RuleSet) {
 		{
-			ctx := New(format, goPath, ruleSet, Verbose, MustPanic, Install, ApplyHooks)
+			ctx := New(richtext.Debug(buf2), goPath, ruleSet, "", Verbose, MustPanic, Install, ApplyHooks)
 			ctx.Get(".", "hookrepo", false, false)
 		}
 
 		{
-			ctx := New(format, goPath, ruleSet, Verbose, MustPanic, Install, ApplyHooks, Update)
+			ctx := New(richtext.Debug(buf3), goPath, ruleSet, "", Verbose, MustPanic, Install, ApplyHooks, Update)
 			ctx.Get(".", "hookrepo", false, false)
 		}
 	})
+	assert.Equal(t, "hookrepo\n", buf2.String())
+	assert.Equal(t, "hookrepo\n", buf3.String())
 
 	expected2 := stringSet{
 		"./pkg/hookrepo.a":                     empty{},
@@ -244,6 +264,7 @@ touch .hook3a`
 		"./src/hookrepo/gen.go":                empty{},
 	}
 	assert.Equal(t, expected2, fileList2)
+
 }
 
 //Poor test coverage:
