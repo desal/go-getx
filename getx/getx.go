@@ -45,6 +45,7 @@ const (
 	CmdVerbose      // Also displays commands being executed
 	ApplyHooks      //
 	TaggedOnly      //
+	RecurseTopLevel
 )
 
 func (fs flagSet) Checked(flag Flag) bool {
@@ -89,7 +90,7 @@ func New(format richtext.Format, goPath []string, ruleSet RuleSet, buildFlags st
 
 	c.cmdCtx = cmd.New(".", format, cmdFlags...)
 	c.gitCtx = git.New(format, gitFlags...)
-	c.goCtx = gocmd.New(format, goPath, buildFlags, goFlags...)
+	c.goCtx = gocmd.New(format, goPath, "", buildFlags, goFlags...)
 
 	return c
 }
@@ -176,6 +177,7 @@ func (c *Context) goToMostRecentTag(pkg, goDir string) error {
 
 func (c *Context) clone(workingDir, pkg, goDir string, depsOnly, tests bool) (bool, error) {
 	rootPkg, gitUrl, err := c.ruleSet.GetUrl(pkg)
+
 	if c.AlreadyDone(rootPkg) {
 		c.donePkgs[pkg] = empty{}
 		return false, nil
@@ -184,7 +186,11 @@ func (c *Context) clone(workingDir, pkg, goDir string, depsOnly, tests bool) (bo
 		return true, c.errorf("%s", err.Error())
 	}
 	if rootPkg != pkg {
-		return false, c.Get(workingDir, rootPkg, depsOnly, tests)
+		if c.flags.Checked(RecurseTopLevel) {
+			return false, c.Get(workingDir, rootPkg, depsOnly, tests)
+		} else {
+			return false, c.getList(workingDir, rootPkg, pkg, depsOnly, tests)
+		}
 	}
 
 	err = c.gitCtx.Clone(goDir, gitUrl)
@@ -210,24 +216,30 @@ func (c *Context) inspect(workingDir, pkg, goDir string, depsOnly, tests bool) (
 		return true, c.errorf("Package %s (%s) is not a git repository", pkg, goDir)
 	}
 
-	gitTopLevel, err := c.gitCtx.TopLevel(goDir)
-	if err != nil {
-		c.donePkgs[pkg] = empty{}
-		return true, c.errorf("%s", err.Error())
-	}
+	var rootPkg string
+	if c.flags.Checked(RecurseTopLevel) {
+		gitTopLevel, err := c.gitCtx.TopLevel(goDir)
+		if err != nil {
+			c.donePkgs[pkg] = empty{}
+			return true, c.errorf("%s", err.Error())
+		}
 
-	nativePkg := filepath.FromSlash(pkg)
+		nativePkg := filepath.FromSlash(pkg)
 
-	if !strings.HasSuffix(goDir, nativePkg) {
-		return true, c.errorf("Package %s (%s) not part of path (%s)", pkg, nativePkg, goDir)
-	}
-	srcPath := strings.TrimSuffix(goDir, nativePkg)
+		if !strings.HasSuffix(goDir, nativePkg) {
+			return true, c.errorf("Package %s (%s) not part of path (%s)", pkg, nativePkg, goDir)
+		}
+		srcPath := strings.TrimSuffix(goDir, nativePkg)
 
-	if !strings.HasPrefix(gitTopLevel, srcPath) {
-		return true, c.errorf("Git top level (%s) of package %s, not below src (%s)",
-			gitTopLevel, pkg, srcPath)
+		if !strings.HasPrefix(gitTopLevel, srcPath) {
+			return true, c.errorf("Git top level (%s) of package %s, not below src (%s)",
+				gitTopLevel, pkg, srcPath)
+		}
+
+		rootPkg = filepath.ToSlash(strings.TrimPrefix(gitTopLevel, srcPath))
+	} else {
+		rootPkg = pkg
 	}
-	rootPkg := filepath.ToSlash(strings.TrimPrefix(gitTopLevel, srcPath))
 
 	if c.AlreadyDone(rootPkg) {
 		//Cache the result to prevent running the git command again
@@ -245,7 +257,7 @@ func (c *Context) inspect(workingDir, pkg, goDir string, depsOnly, tests bool) (
 
 	//Updates are only done if possible. Not an error to fail.
 	if c.flags.Checked(Update) {
-		err = c.runHook(pkg, goDir, "get-before-update.sh")
+		err := c.runHook(pkg, goDir, "get-before-update.sh")
 		if err != nil {
 			return true, err
 		} else if gitStatus, err := c.gitCtx.Status(goDir); err != nil {
@@ -295,6 +307,10 @@ func (c *Context) runHook(pkg, goDir, filename string) error {
 }
 
 func (c *Context) Get(workingDir, pkg string, depsOnly, tests bool) error {
+	return c.getList(workingDir, pkg, pkg, depsOnly, tests)
+}
+
+func (c *Context) getList(workingDir, pkg, listPkg string, depsOnly, tests bool) error {
 
 	goDir, alreadyExists := c.goCtx.Dir(workingDir, pkg)
 
@@ -322,7 +338,7 @@ func (c *Context) Get(workingDir, pkg string, depsOnly, tests bool) error {
 		}
 	}
 
-	list, err := c.goCtx.List(workingDir, pkg+"/...")
+	list, err := c.goCtx.List(workingDir, listPkg+"/...")
 	if err != nil {
 		return err
 	}
