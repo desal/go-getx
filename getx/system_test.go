@@ -24,7 +24,7 @@ func TestSingleRepo(t *testing.T) {
 
 	buf := &bytes.Buffer{}
 	fileList := repos.Test(func(goPath []string, ruleSet RuleSet) {
-		ctx := New(richtext.Debug(buf), goPath, ruleSet, "", Verbose, MustPanic, Install)
+		ctx := New(richtext.Debug(buf), goPath, ruleSet, "", Verbose, MustPanic, Install, RecurseTopLevel)
 		ctx.Get(".", "gh/u1/p1/s2", false, false)
 	})
 
@@ -57,7 +57,7 @@ func TestDependentRepo(t *testing.T) {
 
 	buf := &bytes.Buffer{}
 	fileList := repos.Test(func(goPath []string, ruleSet RuleSet) {
-		ctx := New(richtext.Debug(buf), goPath, ruleSet, "", Verbose, MustPanic, Install)
+		ctx := New(richtext.Debug(buf), goPath, ruleSet, "", Verbose, MustPanic, Install, DeepScan)
 		ctx.Get(".", "gh/u2/p2", false, false)
 	})
 
@@ -71,8 +71,11 @@ func TestDependentRepo(t *testing.T) {
 		"./src/gh/u1/p1/s2/gen.go": empty{},
 		"./src/gh/u2/p2/gen.go":    empty{},
 	}
+
 	assert.Equal(t, expected, fileList)
-	assert.Equal(t, "gh/u1/p1\ngh/u2/p2\n", buf.String())
+	assert.Equal(t, `gh/u1/p1
+gh/u2/p2
+`, buf.String())
 }
 
 func TestMultiDepOk(t *testing.T) {
@@ -91,7 +94,7 @@ func TestMultiDepOk(t *testing.T) {
 
 	buf := &bytes.Buffer{}
 	fileList := repos.Test(func(goPath []string, ruleSet RuleSet) {
-		ctx := New(richtext.Debug(buf), goPath, ruleSet, "", Verbose, MustPanic, Install)
+		ctx := New(richtext.Debug(buf), goPath, ruleSet, "", Verbose, MustPanic, Install, RecurseTopLevel)
 		ctx.Get(".", "gh/u2/p2", false, false)
 	})
 
@@ -127,7 +130,7 @@ func TestMultiDepPartialFail(t *testing.T) {
 
 	buf := &bytes.Buffer{}
 	fileList := repos.Test(func(goPath []string, ruleSet RuleSet) {
-		ctx := New(richtext.Debug(buf), goPath, ruleSet, "", Verbose, MustPanic, Install)
+		ctx := New(richtext.Debug(buf), goPath, ruleSet, "", Verbose, MustPanic, Install, RecurseTopLevel)
 		ctx.Get(".", "gh/u2/p2", false, false)
 	})
 
@@ -214,11 +217,11 @@ func TestDepNoRootUpgradeNoRecurseTopLevel(t *testing.T) {
 	buf2 := &bytes.Buffer{}
 	fileList := repos.Test(func(goPath []string, ruleSet RuleSet) {
 		{
-			ctx := New(richtext.Debug(buf1), goPath, ruleSet, "", Verbose)
+			ctx := New(richtext.Debug(buf1), goPath, ruleSet, "", Verbose, DeepScan)
 			ctx.Get(".", "gh/u1/p1", false, false)
 		}
 		{
-			ctx := New(richtext.Debug(buf2), goPath, ruleSet, "", Verbose, Update, MustPanic, Install)
+			ctx := New(richtext.Debug(buf2), goPath, ruleSet, "", Verbose, Update, MustPanic, Install, DeepScan)
 			ctx.Get(".", "gh/u1/p1", false, false)
 		}
 	})
@@ -231,13 +234,101 @@ func TestDepNoRootUpgradeNoRecurseTopLevel(t *testing.T) {
 		"./src/gh/u1/p2/s2/gen.go": empty{},
 	}
 	assert.Equal(t, expected, fileList)
-	assert.Equal(t, `gh/u1/p2
+	assert.Equal(t, `gh/u1/p2/s1
 gh/u1/p1
 `, buf1.String())
 	assert.Equal(t, `gh/u1/p2/s1
 gh/u1/p1
 `, buf2.String())
 
+}
+
+func TestNoRecurseNoSubPkgs(t *testing.T) {
+	format := richtext.Test(t)
+
+	repos := NewRepos(format)
+
+	repos.AddRepo("gh/u1/p1",
+		Pkg("gh/u1/p1", "gh/u1/p2"))
+	repos.AddRepo("gh/u1/p2",
+		Pkg("gh/u1/p2"),
+		Pkg("gh/u1/p2/sub", "gh/u1/p3"))
+	repos.AddRepo("gh/u1/p3",
+		Pkg("gh/u1/p3"))
+
+	//Test Get
+	buf1 := &bytes.Buffer{}
+	buf2 := &bytes.Buffer{}
+	fileList := repos.Test(func(goPath []string, ruleSet RuleSet) {
+		{
+			ctx := New(richtext.Debug(buf1), goPath, ruleSet, "", Verbose, DeepScan)
+			ctx.Get(".", "gh/u1/p1", false, false)
+		}
+		{
+			ctx := New(richtext.Debug(buf2), goPath, ruleSet, "", Verbose, Update, MustPanic, Install, DeepScan)
+			ctx.Get(".", "gh/u1/p1", false, false)
+		}
+	})
+
+	expected := stringSet{
+		"./pkg/gh/u1/p1.a":          empty{},
+		"./pkg/gh/u1/p2.a":          empty{},
+		"./src/gh/u1/p1/gen.go":     empty{},
+		"./src/gh/u1/p2/gen.go":     empty{},
+		"./src/gh/u1/p2/sub/gen.go": empty{},
+	}
+	assert.Equal(t, expected, fileList)
+	assert.Equal(t, `gh/u1/p2
+gh/u1/p1
+`, buf1.String())
+	assert.Equal(t, `gh/u1/p2
+gh/u1/p1
+`, buf2.String())
+}
+
+func TestNoRecurseMultiPass(t *testing.T) {
+	format := richtext.Test(t)
+
+	repos := NewRepos(format)
+
+	repos.AddRepo("gh/u1/p1",
+		Pkg("gh/u1/p1", "gh/u1/p2/s1", "gh/u1/p2/s2"))
+	repos.AddRepo("gh/u1/p2",
+		Pkg("gh/u1/p2/s1", "gh/u1/p3"),
+		Pkg("gh/u1/p2/s2", "gh/u1/p4"))
+	repos.AddRepo("gh/u1/p3",
+		Pkg("gh/u1/p3"))
+	repos.AddRepo("gh/u1/p4",
+		Pkg("gh/u1/p4"))
+
+	//Test Get
+	buf1 := &bytes.Buffer{}
+	fileList := repos.Test(func(goPath []string, ruleSet RuleSet) {
+		{
+			ctx := New(richtext.Debug(buf1), goPath, ruleSet, "", Verbose, Install, MustPanic, DeepScan)
+			ctx.Get(".", "gh/u1/p1", false, false)
+		}
+	})
+
+	expected := stringSet{
+		"./pkg/gh/u1/p1.a":         empty{},
+		"./pkg/gh/u1/p2/s1.a":      empty{},
+		"./pkg/gh/u1/p2/s2.a":      empty{},
+		"./pkg/gh/u1/p3.a":         empty{},
+		"./pkg/gh/u1/p4.a":         empty{},
+		"./src/gh/u1/p1/gen.go":    empty{},
+		"./src/gh/u1/p2/s1/gen.go": empty{},
+		"./src/gh/u1/p2/s2/gen.go": empty{},
+		"./src/gh/u1/p3/gen.go":    empty{},
+		"./src/gh/u1/p4/gen.go":    empty{},
+	}
+	assert.Equal(t, expected, fileList)
+	assert.Equal(t, `gh/u1/p3
+gh/u1/p2/s1
+gh/u1/p4
+gh/u1/p2/s2
+gh/u1/p1
+`, buf1.String())
 }
 
 func TestHooks(t *testing.T) {
@@ -273,7 +364,7 @@ touch .hook3a`
 	//Install
 	buf1 := &bytes.Buffer{}
 	fileList1 := repos.Test(func(goPath []string, ruleSet RuleSet) {
-		ctx := New(richtext.Debug(buf1), goPath, ruleSet, "", Verbose, MustPanic, Install, ApplyHooks)
+		ctx := New(richtext.Debug(buf1), goPath, ruleSet, "", Verbose, MustPanic, Install, ApplyHooks, DeepScan)
 		ctx.Get(".", "hookrepo", false, false)
 	})
 	assert.Equal(t, "hookrepo\n", buf1.String())
@@ -295,12 +386,12 @@ touch .hook3a`
 	buf3 := &bytes.Buffer{}
 	fileList2 := repos.Test(func(goPath []string, ruleSet RuleSet) {
 		{
-			ctx := New(richtext.Debug(buf2), goPath, ruleSet, "", Verbose, MustPanic, Install, ApplyHooks)
+			ctx := New(richtext.Debug(buf2), goPath, ruleSet, "", Verbose, MustPanic, Install, ApplyHooks, DeepScan)
 			ctx.Get(".", "hookrepo", false, false)
 		}
 
 		{
-			ctx := New(richtext.Debug(buf3), goPath, ruleSet, "", Verbose, MustPanic, Install, ApplyHooks, Update)
+			ctx := New(richtext.Debug(buf3), goPath, ruleSet, "", Verbose, MustPanic, Install, ApplyHooks, Update, DeepScan)
 			ctx.Get(".", "hookrepo", false, false)
 		}
 	})
