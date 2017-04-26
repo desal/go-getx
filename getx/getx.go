@@ -22,14 +22,16 @@ type (
 	stringSet map[string]empty
 
 	Context struct {
-		donePkgs stringSet
-		format   richtext.Format
-		goPath   []string
-		cmdCtx   *cmd.Context
-		gitCtx   *git.Context
-		goCtx    *gocmd.Context
-		ruleSet  RuleSet
-		flags    flagSet
+		clonedPkgs  stringSet
+		inspectedPkgs stringSet
+		listedPkgs stringSet
+		format     richtext.Format
+		goPath     []string
+		cmdCtx     *cmd.Context
+		gitCtx     *git.Context
+		goCtx      *gocmd.Context
+		ruleSet    RuleSet
+		flags      flagSet
 	}
 )
 
@@ -56,11 +58,13 @@ func (fs flagSet) Checked(flag Flag) bool {
 
 func New(format richtext.Format, goPath []string, ruleSet RuleSet, buildFlags string, flags ...Flag) *Context {
 	c := &Context{
-		donePkgs: stringSet{},
-		format:   format,
-		goPath:   goPath,
-		ruleSet:  ruleSet,
-		flags:    flagSet{},
+		clonedPkgs: stringSet{},
+		inspectedPkgs: stringSet{},
+		listedPkgs: stringSet{},
+		format:     format,
+		goPath:     goPath,
+		ruleSet:    ruleSet,
+		flags:      flagSet{},
 	}
 
 	cmdFlags := []cmd.Flag{cmd.Strict}
@@ -119,20 +123,34 @@ func (c *Context) verbosef(s string, a ...interface{}) {
 	}
 }
 
-func pkgContains(parent, child string) bool {
+func IsSameOrDescendentOf(parent, child string) bool {
 	if parent == child || strings.HasPrefix(child, parent+"/") {
 		return true
 	}
 	return false
 }
 
-func (c *Context) AlreadyDone(pkg string) bool {
-	for donePkg, _ := range c.donePkgs {
-		if pkgContains(donePkg, pkg) {
+func (c *Context) AlreadyCloned(pkg string) bool {
+	for clonedPkg, _ := range c.clonedPkgs {
+		if IsSameOrDescendentOf(clonedPkg, pkg) {
 			return true
 		}
 	}
 	return false
+}
+
+func (c *Context) AlreadyInspected(pkg string) bool {
+	for inspectedPkg, _ := range c.inspectedPkgs {
+		if IsSameOrDescendentOf(inspectedPkg, pkg) {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *Context) AlreadyListed(pkg string) bool {
+	_, already := c.listedPkgs[pkg]
+	return already
 }
 
 func stringInSlice(slice []string, s string) bool {
@@ -177,19 +195,26 @@ func (c *Context) goToMostRecentTag(pkg, goDir string) error {
 
 func (c *Context) clone(workingDir, pkg, goDir string, depsOnly, tests bool) (bool, error) {
 	rootPkg, gitUrl, err := c.ruleSet.GetUrl(pkg)
-
-	if c.AlreadyDone(rootPkg) {
-		c.donePkgs[pkg] = empty{}
-		return false, nil
-	}
 	if err != nil {
 		return true, c.errorf("%s", err.Error())
 	}
+
+	if c.AlreadyCloned(rootPkg) {
+		c.clonedPkgs[pkg] = empty{}
+		return true, nil
+	}
+
 	if rootPkg != pkg {
 		if c.flags.Checked(RecurseTopLevel) {
-			return false, c.Get(workingDir, rootPkg, depsOnly, tests)
+			return false, c.getList(workingDir, rootPkg, depsOnly, tests)
+		}
+
+		rootGoDir, alreadyExists := c.goCtx.Dir(workingDir, rootPkg)
+		if alreadyExists {
+			// we should never get here, but it should not be treated as an error
+			return true, nil
 		} else {
-			return false, c.getList(workingDir, rootPkg, pkg, depsOnly, tests)
+			return c.clone(workingDir, rootPkg, rootGoDir, depsOnly, tests)
 		}
 	}
 
@@ -205,83 +230,97 @@ func (c *Context) clone(workingDir, pkg, goDir string, depsOnly, tests bool) (bo
 		}
 	}
 
-	c.donePkgs[pkg] = empty{}
-	c.donePkgs[rootPkg] = empty{}
+	c.clonedPkgs[pkg] = empty{}
 	return true, nil
 }
 
-func (c *Context) inspect(workingDir, pkg, goDir string, depsOnly, tests bool) (bool, error) {
+func (c *Context) getGitRootPkg(pkg, goDir string) (rootPkg, rootGoDir string, err error) {
 	isGit := c.gitCtx.IsGit(goDir)
 	if !isGit {
-		return true, c.errorf("Package %s (%s) is not a git repository", pkg, goDir)
+		err = c.errorf("Package %s (%s) is not a git repository", pkg, goDir)
+		return
 	}
 
-	var rootPkg string
-	if c.flags.Checked(RecurseTopLevel) {
-		gitTopLevel, err := c.gitCtx.TopLevel(goDir)
-		if err != nil {
-			c.donePkgs[pkg] = empty{}
-			return true, c.errorf("%s", err.Error())
-		}
+	gitTopLevel, err := c.gitCtx.TopLevel(goDir)
+	if err != nil {
+		err = c.errorf("%s", err.Error())
+		return
+	}
 
-		nativePkg := filepath.FromSlash(pkg)
+	nativePkg := filepath.FromSlash(pkg)
 
-		if !strings.HasSuffix(goDir, nativePkg) {
-			return true, c.errorf("Package %s (%s) not part of path (%s)", pkg, nativePkg, goDir)
-		}
-		srcPath := strings.TrimSuffix(goDir, nativePkg)
+	if !strings.HasSuffix(goDir, nativePkg) {
+		err = c.errorf("Package %s (%s) not part of path (%s)", pkg, nativePkg, goDir)
+		return
+	}
 
-		if !strings.HasPrefix(gitTopLevel, srcPath) {
-			return true, c.errorf("Git top level (%s) of package %s, not below src (%s)",
-				gitTopLevel, pkg, srcPath)
-		}
+	srcPath := strings.TrimSuffix(goDir, nativePkg)
+	if !strings.HasPrefix(gitTopLevel, srcPath) {
+		err = c.errorf("Git top level (%s) of package %s, not below src (%s)",
+			gitTopLevel, pkg, srcPath)
+	}
 
-		rootPkg = filepath.ToSlash(strings.TrimPrefix(gitTopLevel, srcPath))
+	rootPkg = filepath.ToSlash(strings.TrimPrefix(gitTopLevel, srcPath))
+	rootGoDir = gitTopLevel
+	return
+}
+
+func (c *Context) updatePkg(pkg, goDir string) error {
+	if err := c.runHook(pkg, goDir, "get-before-update.sh"); err != nil {
+		return err
+	} else if gitStatus, err := c.gitCtx.Status(goDir); err != nil {
+		return c.errorf("Failed to get git status for package %s (%s): %s",
+			pkg, goDir, err.Error())
+		return nil
+	} else if gitStatus != git.Clean {
+		c.warnf("Not updating package %s (%s), git status is %s",
+			pkg, goDir, gitStatus.String())
+		return nil
+	} else if err := c.gitCtx.Checkout(goDir, "master"); err != nil {
+		c.warnf("Not updating package %s (%s), Couldn't checkout master: %s",
+			pkg, goDir, err.Error())
+		return nil
+	} else if err := c.gitCtx.Pull(goDir); err != nil {
+		c.warnf("Not updating package %s (%s), Couldn't pull: %s",
+			pkg, goDir, err.Error())
+		return nil
+	} else if c.flags.Checked(TaggedOnly) {
+		return c.goToMostRecentTag(pkg, goDir)
 	} else {
-		rootPkg = pkg
+		return nil
+	}
+}
+
+func (c *Context) inspect(workingDir, pkg, goDir string, depsOnly, tests bool) (bool, error) {
+	if c.AlreadyInspected(pkg) {
+		return true, nil
 	}
 
-	if c.AlreadyDone(rootPkg) {
-		//Cache the result to prevent running the git command again
-		c.donePkgs[pkg] = empty{}
-		return false, nil
-	} else if rootPkg != pkg {
-		//Costs an extra call out to git, but keeps the code way more managable
-		err := c.Get(workingDir, rootPkg, depsOnly, tests)
-		if err != nil {
+	c.inspectedPkgs[pkg] = empty{}
+
+	if !c.flags.Checked(RecurseTopLevel) && !c.flags.Checked(Update) {
+		// you have no reason to be here, so leave
+		return true, nil
+	}
+
+	rootPkg, rootGoDir, err := c.getGitRootPkg(pkg, goDir)
+	if err != nil {
+		return true, err
+	} else if pkg != rootPkg {
+		if c.flags.Checked(RecurseTopLevel) {
+			//Costs an extra call out to git, but keeps the code way more manageable
+			err := c.getList(workingDir, rootPkg, depsOnly, tests)
 			return false, err
+		} else {
+			c.listedPkgs[rootPkg] = empty{}
 		}
-		c.donePkgs[pkg] = empty{}
-		return false, nil
 	}
 
 	//Updates are only done if possible. Not an error to fail.
 	if c.flags.Checked(Update) {
-		err := c.runHook(pkg, goDir, "get-before-update.sh")
-		if err != nil {
-			return true, err
-		} else if gitStatus, err := c.gitCtx.Status(goDir); err != nil {
-			return true, c.errorf("Failed to get git status for package %s (%s): %s",
-				pkg, goDir, err.Error())
-		} else if gitStatus != git.Clean {
-			c.warnf("Not updating package %s (%s), git status is %s",
-				pkg, goDir, gitStatus.String())
-		} else if err := c.gitCtx.Checkout(goDir, "master"); err != nil {
-			c.warnf("Not updating package %s (%s), Couldn't checkout master: %s",
-				pkg, goDir, err.Error())
-		} else if err := c.gitCtx.Pull(goDir); err != nil {
-			c.warnf("Not updating package %s (%s), Couldn't pull: %s",
-				pkg, goDir, err.Error())
-		} else if c.flags.Checked(TaggedOnly) {
-			err := c.goToMostRecentTag(pkg, goDir)
-			if err != nil {
-				return true, err
-			}
-		}
+		err := c.updatePkg(rootPkg, rootGoDir)
+		return true, err
 	}
-
-	c.donePkgs[rootPkg] = empty{}
-	c.donePkgs[pkg] = empty{}
 
 	return true, nil
 }
@@ -307,10 +346,13 @@ func (c *Context) runHook(pkg, goDir, filename string) error {
 }
 
 func (c *Context) Get(workingDir, pkg string, depsOnly, tests bool) error {
-	return c.getList(workingDir, pkg, pkg, depsOnly, tests)
+	return c.getList(workingDir, pkg, depsOnly, tests)
 }
 
-func (c *Context) getList(workingDir, pkg, listPkg string, depsOnly, tests bool) error {
+func (c *Context) getList(workingDir, pkg string, depsOnly, tests bool) error {
+	if c.AlreadyListed(pkg) {
+		return nil
+	}
 
 	goDir, alreadyExists := c.goCtx.Dir(workingDir, pkg)
 
@@ -318,7 +360,6 @@ func (c *Context) getList(workingDir, pkg, listPkg string, depsOnly, tests bool)
 		return c.errorf("Can not get dependencies only for package %s, package does not exist", pkg)
 	} else if depsOnly {
 		//Can do nothing
-		c.donePkgs[pkg] = empty{}
 	} else if !alreadyExists {
 		shouldContinue, err := c.clone(workingDir, pkg, goDir, depsOnly, tests)
 		if err != nil {
@@ -326,8 +367,9 @@ func (c *Context) getList(workingDir, pkg, listPkg string, depsOnly, tests bool)
 		} else if !shouldContinue {
 			return nil
 		}
-	} else if !c.flags.Checked(Update) && !c.flags.Checked(DeepScan) {
-		c.donePkgs[pkg] = empty{}
+	} else if !c.flags.Checked(Update) && !c.flags.Checked(DeepScan) && !c.AlreadyCloned(pkg) {
+		// Avoid scanning existing directories unless Update or DeepsScan selected OR this package is only newly cloned
+		c.listedPkgs[pkg] = empty{}
 		return nil
 	} else {
 		shouldContinue, err := c.inspect(workingDir, pkg, goDir, depsOnly, tests)
@@ -338,14 +380,21 @@ func (c *Context) getList(workingDir, pkg, listPkg string, depsOnly, tests bool)
 		}
 	}
 
-	list, err := c.goCtx.List(workingDir, listPkg+"/...")
+	c.listedPkgs[pkg] = empty{}
+
+	listPkg := pkg
+	if c.flags.Checked(RecurseTopLevel) {
+		listPkg += "/..."
+	}
+
+	list, err := c.goCtx.List(workingDir, listPkg)
 	if err != nil {
 		return err
 	}
 
 	for _, e := range list {
 		//Only check imports, because the recursive nature of this tool
-		//will get the transisitive dependencies.
+		//will get the transitive dependencies.
 		var imports []interface{}
 		var testImports []interface{}
 		if importsInt, ok := e["Imports"]; ok {
@@ -358,7 +407,7 @@ func (c *Context) getList(workingDir, pkg, listPkg string, depsOnly, tests bool)
 
 		for _, impInt := range imports {
 			imp := impInt.(string)
-			if !c.goCtx.IsStdLib(imp) && !c.AlreadyDone(imp) {
+			if !c.goCtx.IsStdLib(imp) && !c.AlreadyListed(imp) {
 				err := c.Get(workingDir, imp, false, false)
 				if err != nil {
 					return err
@@ -368,7 +417,7 @@ func (c *Context) getList(workingDir, pkg, listPkg string, depsOnly, tests bool)
 		if tests {
 			for _, impInt := range testImports {
 				imp := impInt.(string)
-				if !c.goCtx.IsStdLib(imp) && !c.AlreadyDone(imp) {
+				if !c.goCtx.IsStdLib(imp) && !c.AlreadyListed(imp) {
 					err := c.Get(workingDir, imp, false, false)
 					if err != nil {
 						return err
@@ -389,7 +438,7 @@ func (c *Context) getList(workingDir, pkg, listPkg string, depsOnly, tests bool)
 		//attempt to install everything; takes advantage of multiple cores
 		//but will bomb out if some of the sub pkgs are particularly broken
 		//if that happens, attempt installing one by one instead
-		err := c.goCtx.Install(workingDir, pkg+"/...")
+		err := c.goCtx.Install(workingDir, listPkg)
 		if err != nil {
 			for importPath, _ := range list {
 				err := c.goCtx.Install(workingDir, importPath)
@@ -402,7 +451,7 @@ func (c *Context) getList(workingDir, pkg, listPkg string, depsOnly, tests bool)
 					}
 				}
 			}
-			c.warnf("%s/... [Failed: %s]", pkg, strings.Join(failed, ", "))
+			c.warnf("%s [Failed: %s]", listPkg, strings.Join(failed, ", "))
 		}
 	}
 

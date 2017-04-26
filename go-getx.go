@@ -80,7 +80,7 @@ func main() {
 		}
 
 		if *install {
-			goCtx := gocmd.New(format, goPath, *buildFlags, goFlags...)
+			goCtx := gocmd.New(format, goPath, "", *buildFlags, goFlags...)
 			ok := true
 			for _, pkg := range *pkgs {
 				err := goCtx.Install(".", pkg)
