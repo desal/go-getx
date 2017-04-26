@@ -37,7 +37,8 @@ func TestSingleRepo(t *testing.T) {
 		"./src/gh/u1/p1/s2/gen.go": empty{},
 	}
 	assert.Equal(t, expected, fileList)
-	assert.Equal(t, "gh/u1/p1\n", buf.String())
+	// depth-first traversal of dependencies
+	assert.Equal(t, "gh/u1/p1/s1\ngh/u1/p1\ngh/u1/p1/s2\n", buf.String())
 
 }
 
@@ -72,7 +73,7 @@ func TestDependentRepo(t *testing.T) {
 		"./src/gh/u2/p2/gen.go":    empty{},
 	}
 	assert.Equal(t, expected, fileList)
-	assert.Equal(t, "gh/u1/p1\ngh/u2/p2\n", buf.String())
+	assert.Equal(t, "gh/u1/p1/s1\ngh/u1/p1\ngh/u1/p1/s2\ngh/u2/p2\n", buf.String())
 }
 
 func TestMultiDepOk(t *testing.T) {
@@ -98,7 +99,6 @@ func TestMultiDepOk(t *testing.T) {
 	expected := stringSet{
 		"./pkg/gh/u1/p1.a":         empty{},
 		"./pkg/gh/u1/p1/s1.a":      empty{},
-		"./pkg/gh/u1/p1/s2.a":      empty{},
 		"./pkg/gh/u2/p1.a":         empty{},
 		"./pkg/gh/u2/p2.a":         empty{},
 		"./src/gh/u1/p1/gen.go":    empty{},
@@ -108,7 +108,7 @@ func TestMultiDepOk(t *testing.T) {
 		"./src/gh/u2/p2/gen.go":    empty{},
 	}
 	assert.Equal(t, expected, fileList)
-	assert.Equal(t, "gh/u1/p1\ngh/u2/p1\ngh/u2/p2\n", buf.String())
+	assert.Equal(t, "gh/u1/p1/s1\ngh/u1/p1\ngh/u2/p1\ngh/u2/p2\n", buf.String())
 }
 
 func TestMultiDepPartialFail(t *testing.T) {
@@ -123,28 +123,16 @@ func TestMultiDepPartialFail(t *testing.T) {
 	repos.AddRepo("gh/u2/p1",
 		Pkg("gh/u2/p1", "gh/u1/p1/s1"))
 	repos.AddRepo("gh/u2/p2",
-		Pkg("gh/u2/p2", "gh/u1/p1/s1", "gh/u1/p1", "gh/u2/p1"))
+		Pkg("gh/u2/p2", "gh/u1/p1/s1", "gh/u1/p1/s2", "gh/u2/p1"))
 
+	var err error
 	buf := &bytes.Buffer{}
-	fileList := repos.Test(func(goPath []string, ruleSet RuleSet) {
+	_ = repos.Test(func(goPath []string, ruleSet RuleSet) {
 		ctx := New(richtext.Debug(buf), goPath, ruleSet, "", Verbose, MustPanic, Install)
-		ctx.Get(".", "gh/u2/p2", false, false)
+		err = ctx.Get(".", "gh/u2/p2", false, false)
 	})
 
-	expected := stringSet{
-		//"./pkg/gh/u1/p1/s2.a":      empty{},
-		"./pkg/gh/u1/p1.a":         empty{},
-		"./pkg/gh/u1/p1/s1.a":      empty{},
-		"./pkg/gh/u2/p1.a":         empty{},
-		"./pkg/gh/u2/p2.a":         empty{},
-		"./src/gh/u1/p1/gen.go":    empty{},
-		"./src/gh/u1/p1/s1/gen.go": empty{},
-		"./src/gh/u1/p1/s2/gen.go": empty{},
-		"./src/gh/u2/p1/gen.go":    empty{},
-		"./src/gh/u2/p2/gen.go":    empty{},
-	}
-	assert.Equal(t, expected, fileList)
-	assert.Equal(t, "[WARN]gh/u1/p1/... [Failed: .../s2][]\ngh/u2/p1\ngh/u2/p2\n", buf.String())
+	assert.NotNil(t, err)
 }
 
 func TestDepNoRootUpgradeRecurseTopLevel(t *testing.T) {
@@ -231,7 +219,7 @@ func TestDepNoRootUpgradeNoRecurseTopLevel(t *testing.T) {
 		"./src/gh/u1/p2/s2/gen.go": empty{},
 	}
 	assert.Equal(t, expected, fileList)
-	assert.Equal(t, `gh/u1/p2
+	assert.Equal(t, `gh/u1/p2/s1
 gh/u1/p1
 `, buf1.String())
 	assert.Equal(t, `gh/u1/p2/s1
