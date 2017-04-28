@@ -6,6 +6,7 @@ import (
 
 	"github.com/desal/richtext"
 	"github.com/stretchr/testify/assert"
+	"strings"
 )
 
 func TestSingleRepo(t *testing.T) {
@@ -73,7 +74,9 @@ func TestDependentRepo(t *testing.T) {
 	}
 
 	assert.Equal(t, expected, fileList)
-	assert.Equal(t, `gh/u1/p1
+	assert.Equal(t, `gh/u1/p1/s1
+gh/u1/p1
+gh/u1/p1/s2
 gh/u2/p2
 `, buf.String())
 }
@@ -414,6 +417,66 @@ touch .hook3a`
 	assert.Equal(t, expected2, fileList2)
 
 }
+
+func TestAccessing2SeparatePkgsFromSameRepoWithDistinctTransDeps(t *testing.T) {
+	format := richtext.Test(t)
+
+	repos := NewRepos(format)
+
+	repos.AddRepo("gh/u1/p1",
+		Pkg("gh/u1/p1", "gh/u2/p1"),
+		Pkg("gh/u1/p1/s1"),
+		Pkg("gh/u1/p1/s1/a1", "gh/u2/p2"))
+	repos.AddRepo("gh/u2/p1",
+		Pkg("gh/u2/p1"))
+	repos.AddRepo("gh/u2/p2",
+		Pkg("gh/u2/p2"))
+	repos.AddRepo("gh/u3/p1",
+		Pkg("gh/u3/p1", "gh/u1/p1/s1", "gh/u1/p1/s1/a1"))
+
+	buf := &bytes.Buffer{}
+	fileList := repos.Test(func(goPath []string, ruleSet RuleSet) {
+		ctx := New(richtext.Debug(buf), goPath, ruleSet, "", Verbose, MustPanic, Install, RecurseTopLevel)
+		ctx.Get(".", "gh/u3/p1", false, false)
+	})
+
+	expected := stringSet{
+		"./pkg/gh/u1/p1.a":      empty{},
+		"./pkg/gh/u1/p1/s1.a":      empty{},
+		"./pkg/gh/u1/p1/s1/a1.a":      empty{},
+		"./pkg/gh/u2/p1.a":         empty{},
+		"./pkg/gh/u2/p2.a":         empty{},
+		"./pkg/gh/u3/p1.a":         empty{},
+		"./src/gh/u1/p1/gen.go": empty{},
+		"./src/gh/u1/p1/s1/gen.go": empty{},
+		"./src/gh/u1/p1/s1/a1/gen.go": empty{},
+		"./src/gh/u2/p1/gen.go":    empty{},
+		"./src/gh/u2/p2/gen.go":    empty{},
+		"./src/gh/u3/p1/gen.go":    empty{},
+	}
+	assert.Equal(t, expected, fileList)
+	assertOutputEquivTo(t,
+		buf.String(),
+		stringSet{
+			"gh/u2/p1": empty{},
+			"gh/u2/p2": empty{},
+			"gh/u1/p1": empty{},
+			"gh/u3/p1": empty{},
+		},
+	)
+}
+
+func assertOutputEquivTo(t *testing.T, output string, expectedLines stringSet) {
+	actualLines := stringSet{}
+	for _, line := range strings.Split(output, "\n") {
+		line := strings.TrimSpace(line)
+		if len(line) > 0 {
+			actualLines[line] = empty{}
+		}
+	}
+	assert.Equal(t, expectedLines, actualLines)
+}
+
 
 //Poor test coverage:
 // non-git repos
