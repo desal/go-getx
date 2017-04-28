@@ -144,12 +144,8 @@ func (c *Context) AlreadyDoneGit(pkg string) bool {
 }
 
 func (c *Context) AlreadyDoneGo(pkg string) bool {
-	for donePkg, _ := range c.doneGo {
-		if pkgContains(donePkg, pkg) {
-			return true
-		}
-	}
-	return false
+	_, ok := c.doneGo[pkg]
+	return ok
 }
 
 func stringInSlice(slice []string, s string) bool {
